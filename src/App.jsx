@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Flame,
@@ -16,6 +16,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
+import { hasSupabaseConfig, supabase } from "./lib/supabase";
 
 const DAYS = 30;
 const HABITS_STORAGE_KEY = "stability-dashboard-habits-v3";
@@ -24,6 +25,8 @@ const EXPENSES_STORAGE_KEY = "stability-dashboard-expenses-v1";
 const EXPENSE_CATEGORIES_STORAGE_KEY = "stability-dashboard-expense-categories-v1";
 const JOURNAL_STORAGE_KEY = "stability-dashboard-journal-v1";
 const JOURNAL_FOLDERS_STORAGE_KEY = "stability-dashboard-journal-folders-v1";
+const DASHBOARD_STATE_TABLE = "user_dashboard_state";
+const SAVE_DEBOUNCE_MS = 800;
 
 function getTodayDateString() {
   const now = new Date();
@@ -337,6 +340,50 @@ const initialJournalFolders = [
   { id: "folder-reflection", name: "Reflections" },
   { id: "folder-insights", name: "Insights" },
 ];
+
+function getDefaultDashboardState() {
+  return {
+    habits: initialHabits.map(normalizeHabit),
+    tasks: initialTasks,
+    expenses: initialExpenses,
+    expenseCategories: initialExpenseCategories,
+    journalEntries: normalizeJournalEntries(initialJournalEntries),
+    journalFolders: normalizeJournalFolders(initialJournalFolders),
+  };
+}
+
+function normalizeDashboardState(payload = {}) {
+  const defaults = getDefaultDashboardState();
+  return {
+    habits: Array.isArray(payload.habits) ? payload.habits.map(normalizeHabit) : defaults.habits,
+    tasks: Array.isArray(payload.tasks) ? payload.tasks : defaults.tasks,
+    expenses: Array.isArray(payload.expenses) ? payload.expenses : defaults.expenses,
+    expenseCategories: Array.isArray(payload.expenseCategories) ? payload.expenseCategories : defaults.expenseCategories,
+    journalEntries: Array.isArray(payload.journalEntries) ? normalizeJournalEntries(payload.journalEntries) : defaults.journalEntries,
+    journalFolders: Array.isArray(payload.journalFolders) ? normalizeJournalFolders(payload.journalFolders) : defaults.journalFolders,
+  };
+}
+
+function loadLocalDashboardState() {
+  return normalizeDashboardState({
+    habits: loadStoredValue(HABITS_STORAGE_KEY, initialHabits.map(normalizeHabit), (stored) => stored.map(normalizeHabit)),
+    tasks: loadStoredValue(TASKS_STORAGE_KEY, initialTasks),
+    expenses: loadStoredValue(EXPENSES_STORAGE_KEY, initialExpenses),
+    expenseCategories: loadStoredValue(EXPENSE_CATEGORIES_STORAGE_KEY, initialExpenseCategories),
+    journalEntries: loadStoredValue(JOURNAL_STORAGE_KEY, normalizeJournalEntries(initialJournalEntries), (stored) => normalizeJournalEntries(stored)),
+    journalFolders: loadStoredValue(JOURNAL_FOLDERS_STORAGE_KEY, normalizeJournalFolders(initialJournalFolders), (stored) => normalizeJournalFolders(stored)),
+  });
+}
+
+function persistLocalDashboardState(snapshot) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(snapshot.habits));
+  window.localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(snapshot.tasks));
+  window.localStorage.setItem(EXPENSES_STORAGE_KEY, JSON.stringify(snapshot.expenses));
+  window.localStorage.setItem(EXPENSE_CATEGORIES_STORAGE_KEY, JSON.stringify(snapshot.expenseCategories));
+  window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(snapshot.journalEntries));
+  window.localStorage.setItem(JOURNAL_FOLDERS_STORAGE_KEY, JSON.stringify(snapshot.journalFolders));
+}
 
 const palette = {
   emerald: {
@@ -2101,87 +2148,413 @@ function DashboardHome({ habits, tasks, expenses, onOpenSection, workoutUrl, cal
   );
 }
 
-export default function StabilityDashboardApp() {
-  const [habits, setHabits] = useState(() => {
-    return loadStoredValue(HABITS_STORAGE_KEY, initialHabits.map(normalizeHabit), (stored) => stored.map(normalizeHabit));
-  });
-  const [tasks, setTasks] = useState(() => loadStoredValue(TASKS_STORAGE_KEY, initialTasks));
-  const [expenses, setExpenses] = useState(() => loadStoredValue(EXPENSES_STORAGE_KEY, initialExpenses));
-  const [expenseCategories, setExpenseCategories] = useState(() => loadStoredValue(EXPENSE_CATEGORIES_STORAGE_KEY, initialExpenseCategories));
-  const [journalEntries, setJournalEntries] = useState(() =>
-    loadStoredValue(JOURNAL_STORAGE_KEY, normalizeJournalEntries(initialJournalEntries), (stored) => normalizeJournalEntries(stored))
+function SyncBadge({ syncStatus, userEmail, onSignOut, isCloudEnabled }) {
+  return (
+    <div className="fixed right-4 top-4 z-50 max-w-sm rounded-[1.4rem] border border-white/15 bg-zinc-950/90 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="font-semibold">{isCloudEnabled ? "Cloud sync active" : "Local-only mode"}</div>
+          <div className="mt-1 text-white/75">{syncStatus}</div>
+          {userEmail ? <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/50">{userEmail}</div> : null}
+        </div>
+        {onSignOut ? (
+          <button onClick={onSignOut} className="rounded-full border border-white/15 px-3 py-1 text-xs font-semibold text-white/85 hover:bg-white/10">
+            Sign out
+          </button>
+        ) : null}
+      </div>
+    </div>
   );
-  const [journalFolders, setJournalFolders] = useState(() =>
-    loadStoredValue(JOURNAL_FOLDERS_STORAGE_KEY, normalizeJournalFolders(initialJournalFolders), (stored) => normalizeJournalFolders(stored))
+}
+
+function AuthScreen() {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!supabase) return;
+
+    setBusy(true);
+    setMessage("");
+
+    const action =
+      mode === "signup"
+        ? supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+            },
+          })
+        : supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
+    const { data, error } = await action;
+
+    if (error) {
+      setMessage(error.message);
+      setBusy(false);
+      return;
+    }
+
+    if (mode === "signup" && !data.session) {
+      setMessage("Account created. Check your email to confirm the account, then sign in.");
+    }
+
+    if (mode === "signup" && data.session) {
+      setMessage("Account created and signed in.");
+    }
+
+    if (mode === "signin") {
+      setMessage("Signed in. Loading your dashboard...");
+    }
+
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),transparent_22%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-10 md:px-10">
+      <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-[2rem] border border-white/70 bg-white/95 p-8 shadow-sm ring-1 ring-black/5 md:p-10">
+          <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-600">Wellness dashboard</div>
+          <h1 className="mt-3 max-w-2xl text-5xl font-bold tracking-tight text-emerald-950 md:text-6xl">Sign in to sync your habits, tasks, expenses, and journal across devices.</h1>
+          <p className="mt-5 max-w-2xl text-lg text-zinc-700">
+            Once you sign in with the same account on your phone and laptop, your dashboard data will load from the cloud instead of staying trapped in one browser.
+          </p>
+          <div className="mt-8 grid gap-4 md:grid-cols-3">
+            <div className="homepage-inner-card rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-5">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">Sync</div>
+              <div className="mt-2 text-2xl font-semibold text-zinc-950">Cross-device</div>
+              <div className="mt-2 text-zinc-700">Open the same account on your phone and laptop.</div>
+            </div>
+            <div className="homepage-inner-card rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-5">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">Storage</div>
+              <div className="mt-2 text-2xl font-semibold text-zinc-950">Private</div>
+              <div className="mt-2 text-zinc-700">Each signed-in user only sees their own dashboard state.</div>
+            </div>
+            <div className="homepage-inner-card rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-5">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">Migration</div>
+              <div className="mt-2 text-2xl font-semibold text-zinc-950">Automatic</div>
+              <div className="mt-2 text-zinc-700">Existing local data is uploaded the first time you sign in on a device.</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[2rem] border border-white/70 bg-white/95 p-8 shadow-sm ring-1 ring-black/5">
+          <div className="flex gap-2 rounded-full bg-zinc-100 p-1">
+            <button onClick={() => setMode("signin")} className={`flex-1 rounded-full px-4 py-2 font-semibold ${mode === "signin" ? "bg-zinc-950 text-white" : "text-zinc-700"}`}>
+              Sign in
+            </button>
+            <button onClick={() => setMode("signup")} className={`flex-1 rounded-full px-4 py-2 font-semibold ${mode === "signup" ? "bg-zinc-950 text-white" : "text-zinc-700"}`}>
+              Create account
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            <label className="block">
+              <div className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-zinc-600">Email</div>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                className="w-full rounded-2xl border border-zinc-200 px-4 py-3"
+                placeholder="you@example.com"
+              />
+            </label>
+
+            <label className="block">
+              <div className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-zinc-600">Password</div>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                minLength={6}
+                className="w-full rounded-2xl border border-zinc-200 px-4 py-3"
+                placeholder="At least 6 characters"
+              />
+            </label>
+
+            {message ? <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">{message}</div> : null}
+
+            <button type="submit" disabled={busy} className="w-full rounded-[1.2rem] bg-emerald-600 px-5 py-3 text-lg font-semibold text-white shadow-md shadow-emerald-500/15 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70">
+              {busy ? "Working..." : mode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   );
+}
+
+function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, onSignOut, isCloudEnabled }) {
+  const [habits, setHabits] = useState(() => initialData.habits);
+  const [tasks, setTasks] = useState(() => initialData.tasks);
+  const [expenses, setExpenses] = useState(() => initialData.expenses);
+  const [expenseCategories, setExpenseCategories] = useState(() => initialData.expenseCategories);
+  const [journalEntries, setJournalEntries] = useState(() => initialData.journalEntries);
+  const [journalFolders, setJournalFolders] = useState(() => initialData.journalFolders);
   const [activeSection, setActiveSection] = useState("dashboard");
   const workoutUrl = "https://docs.google.com/spreadsheets/";
   const calendarUrl = "https://calendar.google.com/";
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(habits));
-    }
-  }, [habits]);
+    const snapshot = {
+      habits,
+      tasks,
+      expenses,
+      expenseCategories,
+      journalEntries,
+      journalFolders,
+    };
+    persistLocalDashboardState(snapshot);
+    onSnapshotChange?.(snapshot);
+  }, [expenseCategories, expenses, habits, journalEntries, journalFolders, onSnapshotChange, tasks]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
-    }
-  }, [tasks]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(EXPENSES_STORAGE_KEY, JSON.stringify(expenses));
-    }
-  }, [expenses]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(EXPENSE_CATEGORIES_STORAGE_KEY, JSON.stringify(expenseCategories));
-    }
-  }, [expenseCategories]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(journalEntries));
-    }
-  }, [journalEntries]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(JOURNAL_FOLDERS_STORAGE_KEY, JSON.stringify(journalFolders));
-    }
-  }, [journalFolders]);
+  const syncBadge = <SyncBadge syncStatus={syncStatus} userEmail={userEmail} onSignOut={onSignOut} isCloudEnabled={isCloudEnabled} />;
 
   if (activeSection === "habits") {
-    return <HabitPanel habits={habits} setHabits={setHabits} onBack={() => setActiveSection("dashboard")} />;
+    return (
+      <>
+        {syncBadge}
+        <HabitPanel habits={habits} setHabits={setHabits} onBack={() => setActiveSection("dashboard")} />
+      </>
+    );
   }
   if (activeSection === "tasks") {
-    return <TodoPanel tasks={tasks} setTasks={setTasks} onBack={() => setActiveSection("dashboard")} />;
+    return (
+      <>
+        {syncBadge}
+        <TodoPanel tasks={tasks} setTasks={setTasks} onBack={() => setActiveSection("dashboard")} />
+      </>
+    );
   }
   if (activeSection === "expenses") {
-    return <ExpensePanel expenses={expenses} setExpenses={setExpenses} categories={expenseCategories} setCategories={setExpenseCategories} onBack={() => setActiveSection("dashboard")} />;
+    return (
+      <>
+        {syncBadge}
+        <ExpensePanel expenses={expenses} setExpenses={setExpenses} categories={expenseCategories} setCategories={setExpenseCategories} onBack={() => setActiveSection("dashboard")} />
+      </>
+    );
   }
   if (activeSection === "journal") {
-    return <JournalPanel entries={journalEntries} setEntries={setJournalEntries} folders={journalFolders} setFolders={setJournalFolders} onBack={() => setActiveSection("dashboard")} />;
+    return (
+      <>
+        {syncBadge}
+        <JournalPanel entries={journalEntries} setEntries={setJournalEntries} folders={journalFolders} setFolders={setJournalFolders} onBack={() => setActiveSection("dashboard")} />
+      </>
+    );
   }
   if (activeSection === "calendar") {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.10),transparent_25%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
-        <div className="mx-auto max-w-5xl space-y-8">
-          <SectionHeader title="Google Calendar" color="bg-sky-500" onBack={() => setActiveSection("dashboard")} />
-          <div className="rounded-[2rem] border border-white/70 bg-white/95 p-8 shadow-sm ring-1 ring-black/5">
-            <div className="text-2xl font-semibold text-zinc-950">Open Google Calendar</div>
-            <div className="mt-3 text-lg text-zinc-700">Launch your calendar in a new tab to review your schedule, deadlines, and training blocks.</div>
-            <button onClick={() => window.open(calendarUrl, "_blank", "noopener,noreferrer")} className="mt-6 rounded-full bg-sky-500 px-6 py-3 text-lg font-semibold text-white hover:bg-sky-600">
-              Open gcal
-            </button>
+      <>
+        {syncBadge}
+        <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.10),transparent_25%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
+          <div className="mx-auto max-w-5xl space-y-8">
+            <SectionHeader title="Google Calendar" color="bg-sky-500" onBack={() => setActiveSection("dashboard")} />
+            <div className="rounded-[2rem] border border-white/70 bg-white/95 p-8 shadow-sm ring-1 ring-black/5">
+              <div className="text-2xl font-semibold text-zinc-950">Open Google Calendar</div>
+              <div className="mt-3 text-lg text-zinc-700">Launch your calendar in a new tab to review your schedule, deadlines, and training blocks.</div>
+              <button onClick={() => window.open(calendarUrl, "_blank", "noopener,noreferrer")} className="mt-6 rounded-full bg-sky-500 px-6 py-3 text-lg font-semibold text-white hover:bg-sky-600">
+                Open gcal
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
-  return <DashboardHome habits={habits} tasks={tasks} expenses={expenses} onOpenSection={setActiveSection} workoutUrl={workoutUrl} calendarUrl={calendarUrl} />;
+  return (
+    <>
+      {syncBadge}
+      <DashboardHome habits={habits} tasks={tasks} expenses={expenses} onOpenSection={setActiveSection} workoutUrl={workoutUrl} calendarUrl={calendarUrl} />
+    </>
+  );
+}
+
+function LoadingScreen({ message }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),transparent_22%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 text-center">
+      <div className="rounded-[2rem] border border-white/70 bg-white/95 px-8 py-10 shadow-sm ring-1 ring-black/5">
+        <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-600">Wellness dashboard</div>
+        <div className="mt-3 text-3xl font-semibold text-zinc-950">{message}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function StabilityDashboardApp() {
+  const [session, setSession] = useState(null);
+  const [shellKey, setShellKey] = useState(0);
+  const [loading, setLoading] = useState(hasSupabaseConfig);
+  const [syncStatus, setSyncStatus] = useState(hasSupabaseConfig ? "Checking your account..." : "Supabase is not configured yet. The app is still saving on this device only.");
+  const [initialData, setInitialData] = useState(() => loadLocalDashboardState());
+  const [pendingSnapshot, setPendingSnapshot] = useState(() => loadLocalDashboardState());
+  const skipNextSaveRef = useRef(true);
+  const saveTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase) return undefined;
+
+    let isMounted = true;
+
+    const bootstrap = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!isMounted) return;
+      setSession(data.session ?? null);
+      setLoading(false);
+    };
+
+    bootstrap();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!isMounted) return;
+      setSession(nextSession ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase) {
+      setLoading(false);
+      return;
+    }
+
+    if (!session?.user) {
+      setSyncStatus("Sign in to enable cloud sync across devices.");
+      return;
+    }
+
+    let ignore = false;
+
+    const loadCloudState = async () => {
+      setLoading(true);
+      setSyncStatus("Loading your cloud dashboard...");
+
+      const localState = loadLocalDashboardState();
+      const { data, error } = await supabase
+        .from(DASHBOARD_STATE_TABLE)
+        .select("payload")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+
+      if (ignore) return;
+
+      if (error) {
+        setSyncStatus(`Cloud sync error: ${error.message}`);
+        setLoading(false);
+        return;
+      }
+
+      const nextState = data?.payload ? normalizeDashboardState(data.payload) : localState;
+
+      if (!data?.payload) {
+        const { error: upsertError } = await supabase.from(DASHBOARD_STATE_TABLE).upsert({
+          user_id: session.user.id,
+          payload: nextState,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (ignore) return;
+
+        if (upsertError) {
+          setSyncStatus(`Cloud sync error: ${upsertError.message}`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      skipNextSaveRef.current = true;
+      setInitialData(nextState);
+      setPendingSnapshot(nextState);
+      setShellKey((current) => current + 1);
+      setSyncStatus("Synced to cloud.");
+      setLoading(false);
+    };
+
+    loadCloudState();
+
+    return () => {
+      ignore = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
+    if (!pendingSnapshot) return undefined;
+
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return undefined;
+    }
+
+    clearTimeout(saveTimeoutRef.current);
+    setSyncStatus("Saving changes...");
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      const { error } = await supabase.from(DASHBOARD_STATE_TABLE).upsert({
+        user_id: session.user.id,
+        payload: pendingSnapshot,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (error) {
+        setSyncStatus(`Cloud sync error: ${error.message}`);
+        return;
+      }
+
+      setSyncStatus("All changes synced.");
+    }, SAVE_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(saveTimeoutRef.current);
+    };
+  }, [loading, pendingSnapshot, session]);
+
+  if (!hasSupabaseConfig) {
+    return (
+      <DashboardShell
+        key={shellKey}
+        initialData={initialData}
+        onSnapshotChange={setPendingSnapshot}
+        syncStatus={syncStatus}
+        userEmail={null}
+        onSignOut={null}
+        isCloudEnabled={false}
+      />
+    );
+  }
+
+  if (loading) {
+    return <LoadingScreen message="Connecting your dashboard..." />;
+  }
+
+  if (!session?.user) {
+    return <AuthScreen />;
+  }
+
+  return (
+    <DashboardShell
+      key={shellKey}
+      initialData={initialData}
+      onSnapshotChange={setPendingSnapshot}
+      syncStatus={syncStatus}
+      userEmail={session.user.email ?? "Signed in"}
+      onSignOut={() => supabase.auth.signOut()}
+      isCloudEnabled
+    />
+  );
 }
