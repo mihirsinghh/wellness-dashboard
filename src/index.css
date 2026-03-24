@@ -76,6 +76,7 @@ select {
 
 [class*="bg-zinc-50"],
 [class*="bg-zinc-50/90"],
+[class*="bg-zinc-100"],
 [class*="bg-sky-50"],
 [class*="bg-emerald-50"],
 [class*="bg-amber-50"],
@@ -96,12 +97,12 @@ select {
 [class*="text-zinc-900"],
 [class*="text-zinc-800"],
 [class*="text-zinc-700"],
+[class*="text-zinc-600"],
 [class*="text-emerald-900"],
 [class*="text-emerald-800"] {
   color: #c9e7f4 !important;
 }
 
-[class*="text-zinc-600"],
 [class*="text-zinc-500"],
 [class*="text-emerald-900/60"],
 [class*="text-emerald-900/55"],
@@ -135,9 +136,34 @@ select {
   border-color: rgba(57, 255, 20, 0.28) !important;
 }
 
+[class*="bg-sky-100"] {
+  background: rgba(34, 211, 238, 0.14) !important;
+  border-color: rgba(34, 211, 238, 0.28) !important;
+}
+
+[class*="bg-amber-100"] {
+  background: rgba(245, 158, 11, 0.16) !important;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
 [class*="bg-rose-100"] {
   background: rgba(255, 59, 92, 0.16) !important;
   border-color: rgba(255, 59, 92, 0.3) !important;
+}
+
+[class*="text-sky-700"],
+[class*="text-sky-600"] {
+  color: #86ecff !important;
+}
+
+[class*="text-emerald-700"],
+[class*="text-emerald-600"] {
+  color: #b9ffc4 !important;
+}
+
+[class*="text-amber-700"],
+[class*="text-amber-600"] {
+  color: #ffd58a !important;
 }
 
 [class*="bg-emerald-300"] {

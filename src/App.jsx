@@ -25,6 +25,8 @@ const EXPENSES_STORAGE_KEY = "stability-dashboard-expenses-v1";
 const EXPENSE_CATEGORIES_STORAGE_KEY = "stability-dashboard-expense-categories-v1";
 const JOURNAL_STORAGE_KEY = "stability-dashboard-journal-v1";
 const JOURNAL_FOLDERS_STORAGE_KEY = "stability-dashboard-journal-folders-v1";
+const WORKOUT_PLANS_STORAGE_KEY = "stability-dashboard-workout-plans-v1";
+const WORKOUT_FOLDERS_STORAGE_KEY = "stability-dashboard-workout-folders-v1";
 const DASHBOARD_STATE_TABLE = "user_dashboard_state";
 const SAVE_DEBOUNCE_MS = 800;
 
@@ -205,142 +207,77 @@ function normalizeHabit(habit) {
   };
 }
 
-const initialHabits = [
-  {
-    id: "meditation",
-    name: "Morning Meditation",
-    emoji: "🧘",
-    type: "build",
-    target: { mode: "daily", frequency: 1, period: "day", label: "Daily" },
-    logs: buildBinaryHistory([22, 23, 24, 25, 27, 28, 29]),
-    history: {
-      [getMonthKey()]: buildBinaryHistory([22, 23, 24, 25, 27, 28, 29]),
-      [getMonthKeyFromOffset(-1)]: buildBinaryHistory([12, 13, 14, 18, 20, 21, 23, 24, 25]),
-      [getMonthKeyFromOffset(-12)]: buildBinaryHistory([8, 9, 10, 14, 16, 19, 22, 23]),
-    },
-    notes: "Sit, settle, and practice consistency over intensity.",
-    color: "emerald",
-  },
-  {
-    id: "journal",
-    name: "Daily Journal",
-    emoji: "📔",
-    type: "build",
-    target: { mode: "daily", frequency: 1, period: "day", label: "Daily" },
-    logs: buildBinaryHistory([19, 20, 22, 23, 24, 25, 26, 28, 29]),
-    history: {
-      [getMonthKey()]: buildBinaryHistory([19, 20, 22, 23, 24, 25, 26, 28, 29]),
-      [getMonthKeyFromOffset(-1)]: buildBinaryHistory([10, 11, 14, 15, 16, 21, 24, 25]),
-      [getMonthKeyFromOffset(-12)]: buildBinaryHistory([5, 6, 7, 13, 18, 19, 21]),
-    },
-    notes: "Track what reduced suffering and what helped stability.",
-    color: "emerald",
-  },
-  {
-    id: "exercise",
-    name: "Exercise",
-    emoji: "🏋️",
-    type: "build",
-    target: { mode: "daily", frequency: 1, period: "day", label: "Today counts if I moved" },
-    logs: buildBinaryHistory([10, 11, 14, 17, 20, 23, 25, 27, 29]),
-    history: {
-      [getMonthKey()]: buildBinaryHistory([10, 11, 14, 17, 20, 23, 25, 27, 29]),
-      [getMonthKeyFromOffset(-1)]: buildBinaryHistory([3, 7, 12, 16, 19, 22, 26]),
-      [getMonthKeyFromOffset(-12)]: buildBinaryHistory([4, 6, 11, 17, 18, 21, 24, 28]),
-    },
-    notes: "Counts gym, tennis, or mobility flow.",
-    color: "emerald",
-  },
-  {
-    id: "weed",
-    name: "Quit Weed",
-    emoji: "🚭",
-    type: "reduce",
-    target: { mode: "limit", frequency: 0, period: "day", label: "Max 0 / day" },
-    logs: Array.from({ length: DAYS }, (_, i) => ([3, 14, 21].includes(i) ? 1 : 0)),
-    history: {
-      [getMonthKey()]: Array.from({ length: DAYS }, (_, i) => ([3, 14, 21].includes(i) ? 1 : 0)),
-      [getMonthKeyFromOffset(-1)]: Array.from({ length: DAYS }, (_, i) => ([5, 6, 20].includes(i) ? 1 : 0)),
-      [getMonthKeyFromOffset(-12)]: Array.from({ length: DAYS }, (_, i) => ([11, 25].includes(i) ? 1 : 0)),
-    },
-    notes: "Track sober days and daily compliance.",
-    color: "amber",
-  },
-  {
-    id: "icecream",
-    name: "Ice Cream",
-    emoji: "🍨",
-    type: "reduce",
-    target: { mode: "limit", frequency: 1, period: "week", label: "Max 1 / week" },
-    logs: Array.from({ length: DAYS }, (_, i) => ([6, 13, 26].includes(i) ? 1 : 0)),
-    history: {
-      [getMonthKey()]: Array.from({ length: DAYS }, (_, i) => ([6, 13, 26].includes(i) ? 1 : 0)),
-      [getMonthKeyFromOffset(-1)]: Array.from({ length: DAYS }, (_, i) => ([5, 19, 27].includes(i) ? 1 : 0)),
-      [getMonthKeyFromOffset(-12)]: Array.from({ length: DAYS }, (_, i) => ([2, 17].includes(i) ? 1 : 0)),
-    },
-    notes: "Measure success by how many weeks stay within your cap.",
-    color: "amber",
-  },
-  {
-    id: "screen",
-    name: "Screen Time",
-    emoji: "📱",
-    type: "reduce",
-    target: { mode: "limit", frequency: 2, period: "day", label: "Max 2 / day" },
-    logs: Array.from({ length: DAYS }, (_, i) => ([4, 18, 24, 27].includes(i) ? 3 : 1)),
-    history: {
-      [getMonthKey()]: Array.from({ length: DAYS }, (_, i) => ([4, 18, 24, 27].includes(i) ? 3 : 1)),
-      [getMonthKeyFromOffset(-1)]: Array.from({ length: DAYS }, (_, i) => ([8, 16, 23].includes(i) ? 3 : 1)),
-      [getMonthKeyFromOffset(-12)]: Array.from({ length: DAYS }, (_, i) => ([12, 13, 14].includes(i) ? 3 : 1)),
-    },
-    notes: "Track days where usage stays within your chosen cap.",
-    color: "amber",
-  },
-];
+const initialHabits = [];
 
-const initialTasks = [
-  { id: "task-1", text: "Finish philosophy reading", done: true, createdAt: getRelativeDateString(4), completedAt: getRelativeDateString(2) },
-  { id: "task-2", text: "Tennis practice at 4 PM", done: false, createdAt: getRelativeDateString(0), completedAt: null },
-  { id: "task-3", text: "Review internship planning notes", done: false, createdAt: getRelativeDateString(1), completedAt: null },
-  { id: "task-4", text: "Reply to internship email", done: true, createdAt: getRelativeDateString(6), completedAt: getRelativeDateString(6) },
-  { id: "task-5", text: "Plan tomorrow's workout", done: true, createdAt: getRelativeDateString(8), completedAt: getRelativeDateString(8) },
-];
+const initialTasks = [];
 
-const initialExpenses = [
-  { id: "exp-1", label: "Groceries", amount: 48.2, category: "Food", date: getRelativeDateString(1) },
-  { id: "exp-2", label: "Coffee", amount: 6.75, category: "Cafe", date: getRelativeDateString(0) },
-  { id: "exp-3", label: "Tennis strings", amount: 24, category: "Sport", date: getRelativeDateString(4) },
-  { id: "exp-4", label: "Lunch", amount: 15.5, category: "Food", date: getRelativeDateString(6) },
-  { id: "exp-5", label: "Protein bars", amount: 12.25, category: "Fitness", date: getRelativeDateString(8) },
-  { id: "exp-6", label: "Books", amount: 31, category: "Learning", date: getRelativeDateString(10) },
-];
+const initialExpenses = [];
 
-const initialExpenseCategories = ["Food", "Cafe", "Sport", "Fitness", "Learning", "General"];
+const initialExpenseCategories = ["General"];
 
-const initialJournalEntries = [
-  {
-    id: "j-1",
-    title: "What reduced suffering today?",
-    body: "Noticing urges without acting on them made the evening softer. I did better when I focused on the next right action instead of trying to feel perfect.",
-    date: getRelativeDateString(0),
-    updatedAt: `${getRelativeDateString(0)}T20:15:00`,
-    folderId: "folder-reflection",
-  },
-  {
-    id: "j-2",
-    title: "Current insight",
-    body: "Stability matters more than chasing intense understanding. The days feel lighter when I protect sleep, movement, and honest reflection first.",
-    date: getRelativeDateString(2),
-    updatedAt: `${getRelativeDateString(2)}T08:30:00`,
-    folderId: "folder-insights",
-  },
-];
+const initialJournalEntries = [];
 
-const initialJournalFolders = [
-  { id: "folder-reflection", name: "Reflections" },
-  { id: "folder-insights", name: "Insights" },
-];
+const initialJournalFolders = [];
 
+const initialWorkoutFolders = [];
+
+const initialWorkoutPlans = [];
+
+const SEEDED_HABIT_IDS = new Set(["meditation", "journal", "exercise", "weed", "icecream", "screen"]);
+const SEEDED_TASK_IDS = new Set(["task-1", "task-2", "task-3", "task-4", "task-5"]);
+const SEEDED_EXPENSE_IDS = new Set(["exp-1", "exp-2", "exp-3", "exp-4", "exp-5", "exp-6"]);
+const SEEDED_JOURNAL_IDS = new Set(["j-1", "j-2"]);
+const SEEDED_JOURNAL_FOLDER_IDS = new Set(["folder-reflection", "folder-insights"]);
+const SEEDED_JOURNAL_TITLES = new Set(["What reduced suffering today?", "Current insight"]);
+const SEEDED_JOURNAL_FOLDER_NAMES = new Set(["Reflections", "Insights"]);
+const SEEDED_WORKOUT_IDS = new Set(["workout-upper-a", "workout-lower-a"]);
+const SEEDED_WORKOUT_FOLDER_IDS = new Set(["workout-folder-upper-lower", "workout-folder-athletic"]);
+
+function looksLikeSeededDemoData(payload = {}) {
+  const habitIds = (payload.habits ?? []).map((habit) => habit.id).sort().join(",");
+  const taskIds = (payload.tasks ?? []).map((task) => task.id).sort().join(",");
+  const expenseIds = (payload.expenses ?? []).map((expense) => expense.id).sort().join(",");
+  const journalIds = (payload.journalEntries ?? []).map((entry) => entry.id).sort().join(",");
+  const journalFolderIds = (payload.journalFolders ?? []).map((folder) => folder.id).sort().join(",");
+  const workoutIds = (payload.workoutPlans ?? []).map((plan) => plan.id).sort().join(",");
+  const workoutFolderIds = (payload.workoutFolders ?? []).map((folder) => folder.id).sort().join(",");
+
+  return (
+    habitIds === "exercise,icecream,journal,meditation,screen,weed" &&
+    taskIds === "task-1,task-2,task-3,task-4,task-5" &&
+    expenseIds === "exp-1,exp-2,exp-3,exp-4,exp-5,exp-6" &&
+    journalIds === "j-1,j-2" &&
+    journalFolderIds === "folder-insights,folder-reflection" &&
+    workoutIds === "workout-lower-a,workout-upper-a" &&
+    workoutFolderIds === "workout-folder-athletic,workout-folder-upper-lower"
+  );
+}
+
+function stripSeededDemoData(payload = {}) {
+  const habits = (payload.habits ?? []).filter((habit) => !SEEDED_HABIT_IDS.has(habit.id));
+  const tasks = (payload.tasks ?? []).filter((task) => !SEEDED_TASK_IDS.has(task.id));
+  const expenses = (payload.expenses ?? []).filter((expense) => !SEEDED_EXPENSE_IDS.has(expense.id));
+  const journalEntries = (payload.journalEntries ?? []).filter((entry) => !SEEDED_JOURNAL_IDS.has(entry.id) && !SEEDED_JOURNAL_TITLES.has(entry.title));
+  const journalFolders = (payload.journalFolders ?? []).filter((folder) => !SEEDED_JOURNAL_FOLDER_IDS.has(folder.id) && !SEEDED_JOURNAL_FOLDER_NAMES.has(folder.name));
+  const workoutPlans = (payload.workoutPlans ?? []).filter((plan) => !SEEDED_WORKOUT_IDS.has(plan.id));
+  const workoutFolders = (payload.workoutFolders ?? []).filter((folder) => !SEEDED_WORKOUT_FOLDER_IDS.has(folder.id));
+
+  return {
+    ...payload,
+    habits,
+    tasks,
+    expenses,
+    expenseCategories: Array.isArray(payload.expenseCategories) && payload.expenseCategories.length ? payload.expenseCategories : initialExpenseCategories,
+    journalEntries: journalEntries.map((entry) => (
+      SEEDED_JOURNAL_FOLDER_IDS.has(entry.folderId) ? { ...entry, folderId: null } : entry
+    )),
+    journalFolders,
+    workoutPlans: workoutPlans.map((plan) => (
+      SEEDED_WORKOUT_FOLDER_IDS.has(plan.folderId) ? { ...plan, folderId: null } : plan
+    )),
+    workoutFolders,
+  };
+}
 function getDefaultDashboardState() {
   return {
     habits: initialHabits.map(normalizeHabit),
@@ -349,18 +286,24 @@ function getDefaultDashboardState() {
     expenseCategories: initialExpenseCategories,
     journalEntries: normalizeJournalEntries(initialJournalEntries),
     journalFolders: normalizeJournalFolders(initialJournalFolders),
+    workoutPlans: normalizeWorkoutPlans(initialWorkoutPlans),
+    workoutFolders: normalizeWorkoutFolders(initialWorkoutFolders),
   };
 }
 
 function normalizeDashboardState(payload = {}) {
   const defaults = getDefaultDashboardState();
+  if (looksLikeSeededDemoData(payload)) return defaults;
+  const cleanedPayload = stripSeededDemoData(payload);
   return {
-    habits: Array.isArray(payload.habits) ? payload.habits.map(normalizeHabit) : defaults.habits,
-    tasks: Array.isArray(payload.tasks) ? payload.tasks : defaults.tasks,
-    expenses: Array.isArray(payload.expenses) ? payload.expenses : defaults.expenses,
-    expenseCategories: Array.isArray(payload.expenseCategories) ? payload.expenseCategories : defaults.expenseCategories,
-    journalEntries: Array.isArray(payload.journalEntries) ? normalizeJournalEntries(payload.journalEntries) : defaults.journalEntries,
-    journalFolders: Array.isArray(payload.journalFolders) ? normalizeJournalFolders(payload.journalFolders) : defaults.journalFolders,
+    habits: Array.isArray(cleanedPayload.habits) ? cleanedPayload.habits.map(normalizeHabit) : defaults.habits,
+    tasks: Array.isArray(cleanedPayload.tasks) ? cleanedPayload.tasks : defaults.tasks,
+    expenses: Array.isArray(cleanedPayload.expenses) ? cleanedPayload.expenses : defaults.expenses,
+    expenseCategories: Array.isArray(cleanedPayload.expenseCategories) ? cleanedPayload.expenseCategories : defaults.expenseCategories,
+    journalEntries: Array.isArray(cleanedPayload.journalEntries) ? normalizeJournalEntries(cleanedPayload.journalEntries) : defaults.journalEntries,
+    journalFolders: Array.isArray(cleanedPayload.journalFolders) ? normalizeJournalFolders(cleanedPayload.journalFolders) : defaults.journalFolders,
+    workoutPlans: Array.isArray(cleanedPayload.workoutPlans) ? normalizeWorkoutPlans(cleanedPayload.workoutPlans) : defaults.workoutPlans,
+    workoutFolders: Array.isArray(cleanedPayload.workoutFolders) ? normalizeWorkoutFolders(cleanedPayload.workoutFolders) : defaults.workoutFolders,
   };
 }
 
@@ -372,6 +315,8 @@ function loadLocalDashboardState() {
     expenseCategories: loadStoredValue(EXPENSE_CATEGORIES_STORAGE_KEY, initialExpenseCategories),
     journalEntries: loadStoredValue(JOURNAL_STORAGE_KEY, normalizeJournalEntries(initialJournalEntries), (stored) => normalizeJournalEntries(stored)),
     journalFolders: loadStoredValue(JOURNAL_FOLDERS_STORAGE_KEY, normalizeJournalFolders(initialJournalFolders), (stored) => normalizeJournalFolders(stored)),
+    workoutPlans: loadStoredValue(WORKOUT_PLANS_STORAGE_KEY, normalizeWorkoutPlans(initialWorkoutPlans), (stored) => normalizeWorkoutPlans(stored)),
+    workoutFolders: loadStoredValue(WORKOUT_FOLDERS_STORAGE_KEY, normalizeWorkoutFolders(initialWorkoutFolders), (stored) => normalizeWorkoutFolders(stored)),
   });
 }
 
@@ -383,6 +328,8 @@ function persistLocalDashboardState(snapshot) {
   window.localStorage.setItem(EXPENSE_CATEGORIES_STORAGE_KEY, JSON.stringify(snapshot.expenseCategories));
   window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(snapshot.journalEntries));
   window.localStorage.setItem(JOURNAL_FOLDERS_STORAGE_KEY, JSON.stringify(snapshot.journalFolders));
+  window.localStorage.setItem(WORKOUT_PLANS_STORAGE_KEY, JSON.stringify(snapshot.workoutPlans));
+  window.localStorage.setItem(WORKOUT_FOLDERS_STORAGE_KEY, JSON.stringify(snapshot.workoutFolders));
 }
 
 const palette = {
@@ -1238,15 +1185,58 @@ function normalizeJournalFolders(folders = []) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function TodoPanel({ tasks, setTasks, onBack }) {
+function normalizeWorkoutFolders(folders = []) {
+  return folders
+    .map((folder, index) => ({
+      id: folder.id ?? `workout-folder-${Date.now()}-${index}`,
+      name: folder.name?.trim() || `Program ${index + 1}`,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizeWorkoutPlan(plan, index = 0) {
+  return {
+    id: plan.id ?? `workout-${Date.now()}-${index}`,
+    name: plan.name?.trim() || `Workout ${index + 1}`,
+    folderId: plan.folderId ?? null,
+    notes: plan.notes ?? "",
+    updatedAt: plan.updatedAt ?? new Date().toISOString(),
+    exercises: Array.isArray(plan.exercises) && plan.exercises.length
+      ? plan.exercises.map((exercise, rowIndex) => ({
+          id: exercise.id ?? `exercise-${Date.now()}-${rowIndex}`,
+          exercise: exercise.exercise ?? "",
+          sets: exercise.sets ?? "",
+          reps: exercise.reps ?? "",
+          load: exercise.load ?? "",
+          rest: exercise.rest ?? "",
+          notes: exercise.notes ?? "",
+        }))
+      : [{ id: `exercise-${Date.now()}-0`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }],
+  };
+}
+
+function normalizeWorkoutPlans(plans = []) {
+  return plans.map(normalizeWorkoutPlan).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function TodoPanel({ tasks, setTasks, onBack, onReset }) {
   const [newTask, setNewTask] = useState("");
   const pendingTasks = tasks.filter((task) => !task.done);
   const completedTasks = tasks.filter((task) => task.done);
+  const handleReset = () => {
+    setNewTask("");
+    onReset();
+  };
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.10),transparent_25%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
       <div className="mx-auto max-w-5xl space-y-8">
         <SectionHeader title="Tasks" color="bg-sky-500" onBack={onBack} />
+        <div className="flex justify-end">
+          <button onClick={handleReset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
+            Reset tasks
+          </button>
+        </div>
         <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -1345,10 +1335,16 @@ function TodoPanel({ tasks, setTasks, onBack }) {
   );
 }
 
-function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack }) {
+function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack, onReset }) {
   const [view, setView] = useState("month");
   const [form, setForm] = useState({ label: "", amount: "", category: categories[0] ?? "General", date: getTodayDateString() });
   const [newCategory, setNewCategory] = useState("");
+  const handleReset = () => {
+    setView("month");
+    setForm({ label: "", amount: "", category: initialExpenseCategories[0] ?? "General", date: getTodayDateString() });
+    setNewCategory("");
+    onReset();
+  };
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
@@ -1383,6 +1379,11 @@ function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.10),transparent_25%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
       <div className="mx-auto max-w-5xl space-y-8">
         <SectionHeader title="Expenses" color="bg-amber-500" onBack={onBack} />
+        <div className="flex justify-end">
+          <button onClick={handleReset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
+            Reset expenses
+          </button>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-[1.8rem] border border-white/70 bg-white/95 p-4 shadow-sm ring-1 ring-black/5">
           <div>
             <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">View</div>
@@ -1534,7 +1535,465 @@ function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack
   );
 }
 
-function JournalPanel({ entries, setEntries, folders, setFolders, onBack }) {
+function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset }) {
+  const [activeFolderId, setActiveFolderId] = useState("all");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [editingFolderId, setEditingFolderId] = useState(null);
+  const [editingFolderName, setEditingFolderName] = useState("");
+  const [selectedPlanId, setSelectedPlanId] = useState(plans[0]?.id ?? null);
+  const [isEditingPlan, setIsEditingPlan] = useState(false);
+  const [draft, setDraft] = useState(() => {
+    const firstPlan = plans[0];
+    return firstPlan
+      ? normalizeWorkoutPlan(firstPlan)
+      : normalizeWorkoutPlan({ name: "", folderId: null, notes: "", exercises: [] });
+  });
+
+  const visiblePlans = activeFolderId === "all"
+    ? plans
+    : activeFolderId === "unfiled"
+      ? plans.filter((plan) => !plan.folderId)
+      : plans.filter((plan) => plan.folderId === activeFolderId);
+
+  useEffect(() => {
+    if (!plans.length) {
+      setSelectedPlanId(null);
+      setDraft(normalizeWorkoutPlan({ name: "", folderId: null, notes: "", exercises: [] }));
+      return;
+    }
+
+    const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0];
+    setSelectedPlanId(selectedPlan.id);
+    setDraft(normalizeWorkoutPlan(selectedPlan));
+    setIsEditingPlan(false);
+  }, [plans, selectedPlanId]);
+
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? null;
+  const folderNameById = Object.fromEntries(folders.map((folder) => [folder.id, folder.name]));
+  const handleReset = () => {
+    setActiveFolderId("all");
+    setNewFolderName("");
+    setEditingFolderId(null);
+    setEditingFolderName("");
+    setSelectedPlanId(null);
+    setIsEditingPlan(false);
+    setDraft(normalizeWorkoutPlan({ name: "", folderId: null, notes: "", exercises: [] }));
+    onReset();
+  };
+
+  const handleCreateFolder = () => {
+    const trimmed = newFolderName.trim();
+    if (!trimmed) return;
+    const nextFolder = { id: `workout-folder-${Date.now()}`, name: trimmed };
+    setFolders((current) => normalizeWorkoutFolders([...current, nextFolder]));
+    setActiveFolderId(nextFolder.id);
+    setNewFolderName("");
+  };
+
+  const handleSaveFolderRename = () => {
+    const trimmed = editingFolderName.trim();
+    if (!editingFolderId || !trimmed) return;
+    setFolders((current) => normalizeWorkoutFolders(current.map((folder) => (
+      folder.id === editingFolderId ? { ...folder, name: trimmed } : folder
+    ))));
+    setEditingFolderId(null);
+    setEditingFolderName("");
+  };
+
+  const handleDeleteFolder = (folderId) => {
+    setFolders((current) => current.filter((folder) => folder.id !== folderId));
+    setPlans((current) => normalizeWorkoutPlans(current.map((plan) => (
+      plan.folderId === folderId ? { ...plan, folderId: null } : plan
+    ))));
+    if (activeFolderId === folderId) setActiveFolderId("all");
+    if (draft.folderId === folderId) {
+      setDraft((current) => ({ ...current, folderId: null }));
+    }
+  };
+
+  const handleCreatePlan = () => {
+    const nextPlan = normalizeWorkoutPlan({
+      id: `workout-${Date.now()}`,
+      name: "New workout",
+      folderId: activeFolderId === "all" || activeFolderId === "unfiled" ? null : activeFolderId,
+      notes: "",
+      exercises: [],
+      updatedAt: new Date().toISOString(),
+    });
+    setPlans((current) => normalizeWorkoutPlans([nextPlan, ...current]));
+    setSelectedPlanId(nextPlan.id);
+    setDraft(nextPlan);
+    setIsEditingPlan(true);
+  };
+
+  const handleSavePlan = () => {
+    const trimmedName = draft.name.trim();
+    if (!trimmedName) return;
+
+    const cleanedExercises = draft.exercises
+      .map((exercise) => ({
+        ...exercise,
+        exercise: exercise.exercise.trim(),
+        sets: exercise.sets.trim(),
+        reps: exercise.reps.trim(),
+        load: exercise.load.trim(),
+        rest: exercise.rest.trim(),
+        notes: exercise.notes.trim(),
+      }))
+      .filter((exercise) => exercise.exercise || exercise.sets || exercise.reps || exercise.load || exercise.rest || exercise.notes);
+
+    const nextPlan = normalizeWorkoutPlan({
+      ...draft,
+      name: trimmedName,
+      exercises: cleanedExercises.length ? cleanedExercises : [{ exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }],
+      updatedAt: new Date().toISOString(),
+    });
+
+    setPlans((current) => {
+      const exists = current.some((plan) => plan.id === nextPlan.id);
+      if (!exists) return normalizeWorkoutPlans([nextPlan, ...current]);
+      return normalizeWorkoutPlans(current.map((plan) => (plan.id === nextPlan.id ? nextPlan : plan)));
+    });
+    setSelectedPlanId(nextPlan.id);
+    setIsEditingPlan(false);
+  };
+
+  const handleDeletePlan = (planId) => {
+    setPlans((current) => current.filter((plan) => plan.id !== planId));
+  };
+
+  const updateExercise = (exerciseId, key, value) => {
+    setDraft((current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, [key]: value } : exercise)),
+    }));
+  };
+
+  const addExerciseRow = () => {
+    setDraft((current) => ({
+      ...current,
+      exercises: [
+        ...current.exercises,
+        { id: `exercise-${Date.now()}`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" },
+      ],
+    }));
+  };
+
+  const removeExerciseRow = (exerciseId) => {
+    setDraft((current) => ({
+      ...current,
+      exercises: current.exercises.length === 1
+        ? [{ id: `exercise-${Date.now()}`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }]
+        : current.exercises.filter((exercise) => exercise.id !== exerciseId),
+    }));
+  };
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.14),transparent_22%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <SectionHeader title="Workout Planner" color="bg-amber-500" onBack={onBack} />
+        <div className="flex justify-end">
+          <button onClick={handleReset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
+            Reset workouts
+          </button>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.35fr]">
+          <div className="space-y-6">
+            <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Programs</div>
+                  <div className="mt-2 text-2xl font-semibold text-zinc-950">Build splits and day templates inside the app</div>
+                  <div className="mt-2 text-base text-zinc-700">Create folders like Upper / Lower or Push Pull Legs, then save each workout sheet inside them.</div>
+                </div>
+                <button onClick={handleCreatePlan} className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+                  New workout
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
+              <div className="mb-5">
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Folders</div>
+                <div className="mt-2 text-2xl font-semibold text-zinc-950">Organize your workout library</div>
+              </div>
+              <div className="flex gap-3">
+                <input
+                  value={newFolderName}
+                  onChange={(event) => setNewFolderName(event.target.value)}
+                  placeholder="New folder name"
+                  className="flex-1 rounded-2xl border border-zinc-200 px-4 py-3 outline-none focus:ring-2 focus:ring-amber-300"
+                />
+                <button onClick={handleCreateFolder} className="rounded-2xl bg-zinc-950 px-4 py-3 font-semibold text-white hover:bg-zinc-800">
+                  Add
+                </button>
+              </div>
+              <div className="mt-5 space-y-3">
+                <button
+                  onClick={() => setActiveFolderId("all")}
+                  className={`flex w-full items-center justify-between rounded-[1.2rem] border px-4 py-3 text-left ${activeFolderId === "all" ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}
+                >
+                  <span className="font-semibold text-zinc-900">All workouts</span>
+                  <span className="text-sm text-zinc-500">{plans.length}</span>
+                </button>
+                <button
+                  onClick={() => setActiveFolderId("unfiled")}
+                  className={`flex w-full items-center justify-between rounded-[1.2rem] border px-4 py-3 text-left ${activeFolderId === "unfiled" ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}
+                >
+                  <span className="font-semibold text-zinc-900">Unfiled</span>
+                  <span className="text-sm text-zinc-500">{plans.filter((plan) => !plan.folderId).length}</span>
+                </button>
+                {folders.map((folder) => (
+                  <div key={folder.id} className={`rounded-[1.2rem] border px-4 py-3 ${activeFolderId === folder.id ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-zinc-50"}`}>
+                    {editingFolderId === folder.id ? (
+                      <div className="flex gap-2">
+                        <input
+                          value={editingFolderName}
+                          onChange={(event) => setEditingFolderName(event.target.value)}
+                          className="flex-1 rounded-xl border border-zinc-200 px-3 py-2 outline-none focus:ring-2 focus:ring-amber-300"
+                        />
+                        <button onClick={handleSaveFolderRename} className="rounded-xl bg-amber-500 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-600">Save</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <button onClick={() => setActiveFolderId(folder.id)} className="flex-1 text-left">
+                          <div className="font-semibold text-zinc-900">{folder.name}</div>
+                          <div className="text-sm text-zinc-500">{plans.filter((plan) => plan.folderId === folder.id).length} workouts</div>
+                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setEditingFolderId(folder.id);
+                              setEditingFolderName(folder.name);
+                            }}
+                            className="rounded-full p-2 text-zinc-400 hover:bg-white hover:text-zinc-700"
+                            aria-label={`Rename ${folder.name}`}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteFolder(folder.id)}
+                            className="rounded-full p-2 text-zinc-400 hover:bg-white hover:text-red-500"
+                            aria-label={`Delete ${folder.name}`}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
+              <div className="mb-5">
+                <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Workout sheets</div>
+                <div className="mt-2 text-2xl font-semibold text-zinc-950">{visiblePlans.length} visible plans</div>
+              </div>
+              <div className="space-y-3">
+                {visiblePlans.map((plan) => (
+                  <button
+                    key={plan.id}
+                    onClick={() => {
+                      setSelectedPlanId(plan.id);
+                      setIsEditingPlan(false);
+                    }}
+                    className={`w-full rounded-[1.5rem] border p-5 text-left transition ${
+                      plan.id === selectedPlanId
+                        ? "border-amber-300 bg-amber-50/80 shadow-sm"
+                        : "border-zinc-200 bg-zinc-50 hover:border-amber-200 hover:bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-lg font-semibold text-zinc-950">{plan.name}</div>
+                        <div className="mt-2 inline-flex rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
+                          {plan.folderId ? folderNameById[plan.folderId] ?? "Folder" : "Unfiled"}
+                        </div>
+                        <div className="mt-3 text-sm text-zinc-700">{plan.exercises.length} exercises</div>
+                      </div>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleDeletePlan(plan.id);
+                        }}
+                        className="rounded-full p-2 text-zinc-400 transition hover:bg-white hover:text-red-500"
+                        aria-label={`Delete ${plan.name}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </button>
+                ))}
+                {visiblePlans.length === 0 ? <div className="rounded-2xl bg-zinc-50 p-5 text-zinc-600">No workout sheets in this view yet.</div> : null}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
+            {selectedPlan && !isEditingPlan ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Workout sheet</div>
+                    <div className="mt-2 text-3xl font-semibold text-zinc-950">{selectedPlan.name}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">
+                        {selectedPlan.folderId ? folderNameById[selectedPlan.folderId] ?? "Folder" : "Unfiled"}
+                      </div>
+                      <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">
+                        Updated {new Date(selectedPlan.updatedAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsEditingPlan(true)} className="rounded-2xl bg-amber-500 px-5 py-3 font-semibold text-white hover:bg-amber-600">
+                    Edit workout
+                  </button>
+                </div>
+                {selectedPlan.notes ? (
+                  <div className="mt-5 rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-5 text-zinc-700">{selectedPlan.notes}</div>
+                ) : null}
+                <div className="mt-6 overflow-x-auto rounded-[1.5rem] border border-zinc-200 bg-zinc-50">
+                  <table className="min-w-full border-collapse text-left">
+                    <thead>
+                      <tr className="border-b border-zinc-200 text-sm uppercase tracking-[0.16em] text-zinc-500">
+                        <th className="px-4 py-4">Exercise</th>
+                        <th className="px-4 py-4">Sets</th>
+                        <th className="px-4 py-4">Reps</th>
+                        <th className="px-4 py-4">Load</th>
+                        <th className="px-4 py-4">Rest</th>
+                        <th className="px-4 py-4">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedPlan.exercises.map((exercise) => (
+                        <tr key={exercise.id} className="border-b border-zinc-200 last:border-b-0">
+                          <td className="px-4 py-4 font-semibold text-zinc-950">{exercise.exercise || "Untitled exercise"}</td>
+                          <td className="px-4 py-4 text-zinc-700">{exercise.sets || "-"}</td>
+                          <td className="px-4 py-4 text-zinc-700">{exercise.reps || "-"}</td>
+                          <td className="px-4 py-4 text-zinc-700">{exercise.load || "-"}</td>
+                          <td className="px-4 py-4 text-zinc-700">{exercise.rest || "-"}</td>
+                          <td className="px-4 py-4 text-zinc-700">{exercise.notes || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Planner editor</div>
+                    <div className="mt-2 text-3xl font-semibold text-zinc-950">{selectedPlan ? "Edit your workout sheet" : "Create a new workout sheet"}</div>
+                  </div>
+                  <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">{draft.exercises.length} rows</div>
+                </div>
+
+                <div className="mt-6 grid gap-4">
+                  <input
+                    value={draft.name}
+                    onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Workout name"
+                    className="rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-amber-300"
+                  />
+                  <select
+                    value={draft.folderId ?? ""}
+                    onChange={(event) => setDraft((current) => ({ ...current, folderId: event.target.value || null }))}
+                    className="rounded-2xl border border-zinc-200 px-4 py-3 outline-none focus:ring-2 focus:ring-amber-300"
+                  >
+                    <option value="">Unfiled</option>
+                    {folders.map((folder) => (
+                      <option key={folder.id} value={folder.id}>{folder.name}</option>
+                    ))}
+                  </select>
+                  <textarea
+                    value={draft.notes}
+                    onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))}
+                    placeholder="Workout notes, focus, progression cue, or warmup reminder"
+                    className="min-h-[120px] rounded-[1.5rem] border border-zinc-200 px-4 py-4 text-base leading-7 outline-none focus:ring-2 focus:ring-amber-300"
+                  />
+
+                  <div className="overflow-x-auto rounded-[1.5rem] border border-zinc-200 bg-zinc-50">
+                    <table className="min-w-[960px] border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-zinc-200 text-sm uppercase tracking-[0.16em] text-zinc-500">
+                          <th className="px-4 py-4">Exercise</th>
+                          <th className="px-4 py-4">Sets</th>
+                          <th className="px-4 py-4">Reps</th>
+                          <th className="px-4 py-4">Load</th>
+                          <th className="px-4 py-4">Rest</th>
+                          <th className="px-4 py-4">Notes</th>
+                          <th className="px-4 py-4">Row</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {draft.exercises.map((exercise) => (
+                          <tr key={exercise.id} className="border-b border-zinc-200 last:border-b-0">
+                            <td className="px-4 py-3">
+                              <input value={exercise.exercise} onChange={(event) => updateExercise(exercise.id, "exercise", event.target.value)} className="w-full rounded-xl border border-zinc-200 px-3 py-2" placeholder="Exercise" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input value={exercise.sets} onChange={(event) => updateExercise(exercise.id, "sets", event.target.value)} className="w-20 rounded-xl border border-zinc-200 px-3 py-2" placeholder="4" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input value={exercise.reps} onChange={(event) => updateExercise(exercise.id, "reps", event.target.value)} className="w-24 rounded-xl border border-zinc-200 px-3 py-2" placeholder="8-10" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input value={exercise.load} onChange={(event) => updateExercise(exercise.id, "load", event.target.value)} className="w-28 rounded-xl border border-zinc-200 px-3 py-2" placeholder="135 lb" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input value={exercise.rest} onChange={(event) => updateExercise(exercise.id, "rest", event.target.value)} className="w-28 rounded-xl border border-zinc-200 px-3 py-2" placeholder="90 sec" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input value={exercise.notes} onChange={(event) => updateExercise(exercise.id, "notes", event.target.value)} className="w-full rounded-xl border border-zinc-200 px-3 py-2" placeholder="Technique cue" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <button onClick={() => removeExerciseRow(exercise.id)} className="rounded-full border border-zinc-200 bg-white p-2 text-zinc-400 hover:text-red-500">
+                                <Trash2 size={15} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button onClick={addExerciseRow} className="rounded-2xl border border-zinc-200 px-4 py-3 font-semibold text-zinc-700 hover:bg-zinc-50">
+                      Add row
+                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => {
+                          if (selectedPlan) {
+                            setDraft(normalizeWorkoutPlan(selectedPlan));
+                            setIsEditingPlan(false);
+                            return;
+                          }
+                          setDraft(normalizeWorkoutPlan({ name: "", folderId: null, notes: "", exercises: [] }));
+                        }}
+                        className="rounded-2xl border border-zinc-200 px-4 py-3 font-semibold text-zinc-700 hover:bg-zinc-50"
+                      >
+                        {selectedPlan ? "Cancel" : "Reset"}
+                      </button>
+                      <button onClick={handleSavePlan} className="rounded-2xl bg-amber-500 px-5 py-3 font-semibold text-white hover:bg-amber-600">
+                        Save workout
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function JournalPanel({ entries, setEntries, folders, setFolders, onBack, onReset }) {
   const [prompts] = useState(() => getRandomJournalPrompts());
   const [activeFolderId, setActiveFolderId] = useState("all");
   const [newFolderName, setNewFolderName] = useState("");
@@ -1576,6 +2035,16 @@ function JournalPanel({ entries, setEntries, folders, setFolders, onBack }) {
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
   const bodyWordCount = draft.body.trim() ? draft.body.trim().split(/\s+/).length : 0;
   const folderNameById = Object.fromEntries(folders.map((folder) => [folder.id, folder.name]));
+  const handleReset = () => {
+    setActiveFolderId("all");
+    setNewFolderName("");
+    setEditingFolderId(null);
+    setEditingFolderName("");
+    setSelectedId(null);
+    setIsEditingEntry(false);
+    setDraft({ title: "", body: "", date: getTodayDateString(), folderId: null });
+    onReset();
+  };
 
   const handleCreateEntry = (promptTitle = "New reflection") => {
     const timestamp = Date.now();
@@ -1654,6 +2123,11 @@ function JournalPanel({ entries, setEntries, folders, setFolders, onBack }) {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.10),transparent_25%),linear-gradient(135deg,#f7f8f3_0%,#eff3ee_45%,#f7eee2_100%)] px-6 py-8 md:px-10 lg:px-14">
       <div className="mx-auto max-w-6xl space-y-8">
         <SectionHeader title="Journal" color="bg-emerald-500" onBack={onBack} />
+        <div className="flex justify-end">
+          <button onClick={handleReset} className="rounded-full border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50">
+            Reset journal
+          </button>
+        </div>
         <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
           <div className="space-y-6">
             <div className="rounded-[2rem] border border-white/70 bg-white/95 p-6 shadow-sm ring-1 ring-black/5">
@@ -1863,7 +2337,7 @@ function JournalPanel({ entries, setEntries, folders, setFolders, onBack }) {
                   <textarea
                     value={draft.body}
                     onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))}
-                    placeholder="What reduced suffering today? What made the day more stable? What do you want to remember?"
+                    placeholder="What stood out today? What made the day more stable? What do you want to remember?"
                     className="min-h-[340px] rounded-[1.5rem] border border-zinc-200 px-4 py-4 text-base leading-7 outline-none focus:ring-2 focus:ring-emerald-300"
                   />
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1902,7 +2376,7 @@ function JournalPanel({ entries, setEntries, folders, setFolders, onBack }) {
   );
 }
 
-function HabitPanel({ habits, setHabits, onBack }) {
+function HabitPanel({ habits, setHabits, onBack, onReset }) {
   const [selectedHabit, setSelectedHabit] = useState(null);
   const [addingHabit, setAddingHabit] = useState(false);
   const [editingHabit, setEditingHabit] = useState(null);
@@ -1911,6 +2385,13 @@ function HabitPanel({ habits, setHabits, onBack }) {
   const reduceHabits = useMemo(() => habits.filter((h) => h.type === "reduce"), [habits]);
   const todaysGoals = useMemo(() => habits.filter((h) => getHabitMetrics(h).completedToday).length, [habits]);
   const pendingHabits = useMemo(() => habits.filter((h) => !getHabitMetrics(h).completedToday), [habits]);
+  const handleReset = () => {
+    setSelectedHabit(null);
+    setAddingHabit(false);
+    setEditingHabit(null);
+    setLoggingHabit(null);
+    onReset();
+  };
 
   const quickToggleBuildHabit = (habitId) => {
     setHabits((current) => current.map((habit) => {
@@ -2009,7 +2490,12 @@ function HabitPanel({ habits, setHabits, onBack }) {
               </div>
             ) : null}
           </div>
-          <button onClick={() => setAddingHabit(true)} className="inline-flex items-center gap-2 rounded-[1.2rem] bg-emerald-600 px-5 py-3 text-lg font-semibold text-white shadow-md shadow-emerald-500/15 hover:bg-emerald-700"><Plus size={20} /> New Habit</button>
+          <div className="flex flex-wrap gap-3">
+            <button onClick={handleReset} className="rounded-[1.2rem] border border-zinc-300 px-5 py-3 text-lg font-semibold text-zinc-700 hover:bg-zinc-50">
+              Reset habits
+            </button>
+            <button onClick={() => setAddingHabit(true)} className="inline-flex items-center gap-2 rounded-[1.2rem] bg-emerald-600 px-5 py-3 text-lg font-semibold text-white shadow-md shadow-emerald-500/15 hover:bg-emerald-700"><Plus size={20} /> New Habit</button>
+          </div>
         </div>
         <div className="space-y-14">
           <section>
@@ -2019,6 +2505,7 @@ function HabitPanel({ habits, setHabits, onBack }) {
                 <HabitCard key={habit.id} habit={habit} metrics={getHabitMetrics(habit)} onSelect={setSelectedHabit} onQuickToggle={quickToggleBuildHabit} onOpenLogModal={setLoggingHabit} onEdit={setEditingHabit} onDelete={handleDeleteHabit} />
               ))}
             </div>
+            {buildHabits.length === 0 ? <div className="mt-6 rounded-[1.5rem] border border-dashed border-zinc-300 bg-white/90 p-6 text-lg text-zinc-600">No build habits yet. Add one to start tracking your daily wins.</div> : null}
           </section>
           <section>
             <SectionHeader title="Reduce Limits" color="bg-amber-500" />
@@ -2027,6 +2514,7 @@ function HabitPanel({ habits, setHabits, onBack }) {
                 <HabitCard key={habit.id} habit={habit} metrics={getHabitMetrics(habit)} onSelect={setSelectedHabit} onQuickToggle={quickToggleBuildHabit} onOpenLogModal={setLoggingHabit} onEdit={setEditingHabit} onDelete={handleDeleteHabit} />
               ))}
             </div>
+            {reduceHabits.length === 0 ? <div className="mt-6 rounded-[1.5rem] border border-dashed border-zinc-300 bg-white/90 p-6 text-lg text-zinc-600">No reduce habits yet. Add a limit you want to keep visible.</div> : null}
           </section>
         </div>
       </div>
@@ -2037,7 +2525,7 @@ function HabitPanel({ habits, setHabits, onBack }) {
   );
 }
 
-function DashboardHome({ habits, tasks, expenses, onOpenSection, workoutUrl, calendarUrl }) {
+function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, calendarUrl }) {
   const completedTasks = tasks.filter((task) => task.done).length;
   const pendingTasks = tasks.filter((task) => !task.done);
   const expenseTotal = expenses.reduce((sum, exp) => sum + exp.amount, 0);
@@ -2086,9 +2574,9 @@ function DashboardHome({ habits, tasks, expenses, onOpenSection, workoutUrl, cal
         <div className="grid gap-6 xl:grid-cols-2">
           <ModuleCard icon={Flame} title="Habit Tracking" subtitle="Open your streak dashboard, add habits, and log progress." rightText={`${habits.length} habits`} onClick={() => onOpenSection("habits")} />
           <ModuleCard icon={ListTodo} title="Tasks" subtitle="Keep today’s responsibilities visible and actionable." rightText={`${completedTasks}/${tasks.length} done`} accent="sky" onClick={() => onOpenSection("tasks")} />
-          <ModuleCard icon={Dumbbell} title="Workout Sheet" subtitle="Open your workout plan in Google Sheets." rightText="External link" accent="amber" onClick={() => window.open(workoutUrl, "_blank", "noopener,noreferrer")} />
+          <ModuleCard icon={Dumbbell} title="Workout Planner" subtitle="Create spreadsheet-style workouts, save templates, and organize them into folders." rightText={`${workoutPlans.length} plans`} accent="amber" onClick={() => onOpenSection("workouts")} />
           <ModuleCard icon={Wallet} title="Expense Tracker" subtitle="Track this week or month and see category breakdowns at a glance." rightText={formatCurrency(expenseTotal)} accent="amber" onClick={() => onOpenSection("expenses")} />
-          <ModuleCard icon={BookOpen} title="Journal" subtitle="Capture reflections, prompts, and what reduced suffering." rightText="Reflection" onClick={() => onOpenSection("journal")} />
+          <ModuleCard icon={BookOpen} title="Journal" subtitle="Capture reflections, prompts, and what helped the day feel clear." rightText="Reflection" onClick={() => onOpenSection("journal")} />
           <ModuleCard icon={CalendarDays} title="Google Calendar" subtitle="Open Google Calendar in a new tab to check your schedule." rightText="Open gcal" accent="sky" onClick={() => window.open(calendarUrl, "_blank", "noopener,noreferrer")} />
         </div>
 
@@ -2119,6 +2607,7 @@ function DashboardHome({ habits, tasks, expenses, onOpenSection, workoutUrl, cal
                 );
               })}
             </div>
+            {habits.length === 0 ? <div className="mt-4 rounded-[1.5rem] border border-dashed border-zinc-300 bg-white/90 p-6 text-lg text-zinc-600">No habits added yet. Create your first habit to populate your dashboard snapshot.</div> : null}
           </div>
 
           <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
@@ -2150,18 +2639,20 @@ function DashboardHome({ habits, tasks, expenses, onOpenSection, workoutUrl, cal
 
 function SyncBadge({ syncStatus, userEmail, onSignOut, isCloudEnabled }) {
   return (
-    <div className="fixed right-4 top-4 z-50 max-w-sm rounded-[1.4rem] border border-white/15 bg-zinc-950/90 px-4 py-3 text-sm text-white shadow-2xl backdrop-blur">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="font-semibold">{isCloudEnabled ? "Cloud sync active" : "Local-only mode"}</div>
-          <div className="mt-1 text-white/75">{syncStatus}</div>
-          {userEmail ? <div className="mt-1 text-xs uppercase tracking-[0.16em] text-white/50">{userEmail}</div> : null}
-        </div>
+    <div className="mb-4 flex justify-end">
+      <div className="group relative flex items-center gap-2 rounded-full border border-cyan-300/20 bg-zinc-950/88 px-3 py-2 text-xs font-semibold text-white shadow-2xl backdrop-blur">
+        <span className={`h-2.5 w-2.5 rounded-full ${isCloudEnabled ? "bg-[#39ff14] shadow-[0_0_12px_rgba(57,255,20,0.9)]" : "bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.9)]"}`} />
+        <span>{isCloudEnabled ? "Cloud sync on" : "Local mode"}</span>
+        <div className="hidden text-white/60 md:block">{userEmail ?? ""}</div>
         {onSignOut ? (
-          <button onClick={onSignOut} className="rounded-full border border-white/15 px-3 py-1 text-xs font-semibold text-white/85 hover:bg-white/10">
+          <button onClick={onSignOut} className="rounded-full border border-white/10 px-2 py-1 text-[11px] text-white/80 hover:bg-white/10">
             Sign out
           </button>
         ) : null}
+        <div className="pointer-events-none absolute right-0 top-full mt-2 hidden w-64 rounded-2xl border border-white/10 bg-zinc-950/95 p-3 text-left text-xs font-medium text-white/80 shadow-2xl group-hover:block">
+          <div>{syncStatus}</div>
+          {userEmail ? <div className="mt-1 text-white/45">{userEmail}</div> : null}
+        </div>
       </div>
     </div>
   );
@@ -2301,9 +2792,25 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
   const [expenseCategories, setExpenseCategories] = useState(() => initialData.expenseCategories);
   const [journalEntries, setJournalEntries] = useState(() => initialData.journalEntries);
   const [journalFolders, setJournalFolders] = useState(() => initialData.journalFolders);
+  const [workoutPlans, setWorkoutPlans] = useState(() => initialData.workoutPlans);
+  const [workoutFolders, setWorkoutFolders] = useState(() => initialData.workoutFolders);
   const [activeSection, setActiveSection] = useState("dashboard");
-  const workoutUrl = "https://docs.google.com/spreadsheets/";
   const calendarUrl = "https://calendar.google.com/";
+
+  const resetHabits = () => setHabits([]);
+  const resetTasks = () => setTasks([]);
+  const resetExpenses = () => {
+    setExpenses([]);
+    setExpenseCategories(initialExpenseCategories);
+  };
+  const resetJournal = () => {
+    setJournalEntries([]);
+    setJournalFolders([]);
+  };
+  const resetWorkouts = () => {
+    setWorkoutPlans([]);
+    setWorkoutFolders([]);
+  };
 
   useEffect(() => {
     const snapshot = {
@@ -2313,10 +2820,12 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
       expenseCategories,
       journalEntries,
       journalFolders,
+      workoutPlans,
+      workoutFolders,
     };
     persistLocalDashboardState(snapshot);
     onSnapshotChange?.(snapshot);
-  }, [expenseCategories, expenses, habits, journalEntries, journalFolders, onSnapshotChange, tasks]);
+  }, [expenseCategories, expenses, habits, journalEntries, journalFolders, onSnapshotChange, tasks, workoutFolders, workoutPlans]);
 
   const syncBadge = <SyncBadge syncStatus={syncStatus} userEmail={userEmail} onSignOut={onSignOut} isCloudEnabled={isCloudEnabled} />;
 
@@ -2324,7 +2833,7 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
     return (
       <>
         {syncBadge}
-        <HabitPanel habits={habits} setHabits={setHabits} onBack={() => setActiveSection("dashboard")} />
+        <HabitPanel habits={habits} setHabits={setHabits} onBack={() => setActiveSection("dashboard")} onReset={resetHabits} />
       </>
     );
   }
@@ -2332,7 +2841,7 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
     return (
       <>
         {syncBadge}
-        <TodoPanel tasks={tasks} setTasks={setTasks} onBack={() => setActiveSection("dashboard")} />
+        <TodoPanel tasks={tasks} setTasks={setTasks} onBack={() => setActiveSection("dashboard")} onReset={resetTasks} />
       </>
     );
   }
@@ -2340,7 +2849,7 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
     return (
       <>
         {syncBadge}
-        <ExpensePanel expenses={expenses} setExpenses={setExpenses} categories={expenseCategories} setCategories={setExpenseCategories} onBack={() => setActiveSection("dashboard")} />
+        <ExpensePanel expenses={expenses} setExpenses={setExpenses} categories={expenseCategories} setCategories={setExpenseCategories} onBack={() => setActiveSection("dashboard")} onReset={resetExpenses} />
       </>
     );
   }
@@ -2348,7 +2857,15 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
     return (
       <>
         {syncBadge}
-        <JournalPanel entries={journalEntries} setEntries={setJournalEntries} folders={journalFolders} setFolders={setJournalFolders} onBack={() => setActiveSection("dashboard")} />
+        <JournalPanel entries={journalEntries} setEntries={setJournalEntries} folders={journalFolders} setFolders={setJournalFolders} onBack={() => setActiveSection("dashboard")} onReset={resetJournal} />
+      </>
+    );
+  }
+  if (activeSection === "workouts") {
+    return (
+      <>
+        {syncBadge}
+        <WorkoutPanel plans={workoutPlans} setPlans={setWorkoutPlans} folders={workoutFolders} setFolders={setWorkoutFolders} onBack={() => setActiveSection("dashboard")} onReset={resetWorkouts} />
       </>
     );
   }
@@ -2375,7 +2892,7 @@ function DashboardShell({ initialData, onSnapshotChange, syncStatus, userEmail, 
   return (
     <>
       {syncBadge}
-      <DashboardHome habits={habits} tasks={tasks} expenses={expenses} onOpenSection={setActiveSection} workoutUrl={workoutUrl} calendarUrl={calendarUrl} />
+      <DashboardHome habits={habits} tasks={tasks} expenses={expenses} workoutPlans={workoutPlans} onOpenSection={setActiveSection} calendarUrl={calendarUrl} />
     </>
   );
 }
@@ -2461,7 +2978,9 @@ export default function StabilityDashboardApp() {
 
       const nextState = data?.payload ? normalizeDashboardState(data.payload) : localState;
 
-      if (!data?.payload) {
+      const needsCloudRewrite = !data?.payload || JSON.stringify(nextState) !== JSON.stringify(data.payload);
+
+      if (needsCloudRewrite) {
         const { error: upsertError } = await supabase.from(DASHBOARD_STATE_TABLE).upsert({
           user_id: session.user.id,
           payload: nextState,
@@ -2558,3 +3077,5 @@ export default function StabilityDashboardApp() {
     />
   );
 }
+
+
