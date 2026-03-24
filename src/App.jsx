@@ -278,6 +278,26 @@ function stripSeededDemoData(payload = {}) {
     workoutFolders,
   };
 }
+
+function formatBenefitAmount(amount, unit = "") {
+  const rounded = Number.isInteger(amount) ? `${amount}` : amount.toFixed(1);
+  return unit.trim() === "$" ? `$${rounded}` : `${rounded}${unit ? ` ${unit}` : ""}`;
+}
+
+function getHabitBenefitSummary(habit, successCount = 0) {
+  if (!habit.benefit || !habit.benefit.amount || !habit.benefit.unit?.trim()) return null;
+  const amount = Number(habit.benefit.amount) || 0;
+  const total = amount * successCount;
+  const verb = habit.benefit.verb?.trim() || "saved";
+  return {
+    amount,
+    total,
+    unit: habit.benefit.unit.trim(),
+    verb,
+    perSuccessLabel: `${formatBenefitAmount(amount, habit.benefit.unit)} ${verb} per successful ${habit.target.period}`,
+    totalLabel: `${formatBenefitAmount(total, habit.benefit.unit)} ${verb} this month`,
+  };
+}
 function getDefaultDashboardState() {
   return {
     habits: initialHabits.map(normalizeHabit),
@@ -799,9 +819,10 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
   const isBuild = habit.type === "build";
   const percentLabel = `${metrics.consistency30}%`;
   const titleStyle = getHabitTitleStyle(habit.name);
+  const benefitSummary = getHabitBenefitSummary(habit, metrics.totalSuccessful);
 
   return (
-    <button onClick={() => onSelect(habit)} className="w-full rounded-[2rem] border border-white/70 bg-white/95 p-6 text-left shadow-sm ring-1 ring-black/5 transition hover:shadow-md">
+    <button onClick={() => onSelect(habit)} className="group relative w-full rounded-[2rem] border border-white/70 bg-white/95 p-6 text-left shadow-sm ring-1 ring-black/5 transition hover:shadow-md">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-4">
           <div className={`flex h-20 w-20 shrink-0 items-center justify-center rounded-[1.75rem] ${colors.pill} text-4xl shadow-sm`}>{habit.emoji}</div>
@@ -872,6 +893,12 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
           </button>
         )}
       </div>
+      {benefitSummary ? (
+        <div className="pointer-events-none absolute inset-x-4 bottom-4 hidden rounded-[1.3rem] border border-cyan-300/20 bg-zinc-950/95 px-4 py-3 text-sm text-white shadow-2xl group-hover:block">
+          <div className="font-semibold">{benefitSummary.perSuccessLabel}</div>
+          <div className="mt-1 text-white/70">{benefitSummary.totalLabel}</div>
+        </div>
+      ) : null}
     </button>
   );
 }
@@ -896,6 +923,7 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
   const colors = palette[habit.color];
   const suffix = metrics.chartXAxisMode === "weeks" ? "weeks" : metrics.chartXAxisMode === "months" ? "months" : "days";
   const isBuild = habit.type === "build";
+  const benefitSummary = getHabitBenefitSummary(habit, metrics.totalSuccessful);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),transparent_25%),linear-gradient(135deg,#f6f8f3_0%,#eef4ef_45%,#f8efe3_100%)] px-6 py-8 md:px-10 lg:px-14">
@@ -912,6 +940,9 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
                   {habit.type === "build" ? <Flame size={16} /> : <Shield size={16} />}
                   {habit.type === "build" ? "Build habit" : "Reduce / quit habit"}
                 </div>
+                {benefitSummary ? (
+                  <div className="mt-3 text-base text-emerald-900/70">{benefitSummary.perSuccessLabel}</div>
+                ) : null}
                 <p className="mt-5 max-w-2xl text-lg text-emerald-900/70">{habit.notes}</p>
               </div>
             </div>
@@ -939,7 +970,7 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
           <StatCard label="Current streak" value={metrics.currentStreak} suffix={suffix} />
           <StatCard label="Best streak" value={metrics.bestStreak} suffix={suffix} />
           <StatCard label="Success rate" value={metrics.consistency30} suffix="%" />
-          <StatCard label={metrics.periodSummaryLabel} value={metrics.periodSuccesses} />
+          {benefitSummary ? <StatCard label={benefitSummary.verb} value={formatBenefitAmount(benefitSummary.total, benefitSummary.unit)} /> : <StatCard label={metrics.periodSummaryLabel} value={metrics.periodSuccesses} />}
         </div>
 
         <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
@@ -980,9 +1011,15 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
     frequency: initialHabit?.target?.frequency ?? 1,
     period: initialHabit?.target?.period ?? "day",
     notes: initialHabit?.notes ?? "",
+    benefitAmount: initialHabit?.benefit?.amount ?? "",
+    benefitUnit: initialHabit?.benefit?.unit ?? "",
+    benefitVerb: initialHabit?.benefit?.verb ?? "saved",
   }));
   const targetLabel = form.type === "build" ? (form.period === "day" ? "Daily" : `${form.frequency} / ${form.period}`) : `Max ${form.frequency} / ${form.period}`;
   const isEditing = Boolean(initialHabit);
+  const benefitPreview = form.benefitAmount && form.benefitUnit.trim()
+    ? `${formatBenefitAmount(Number(form.benefitAmount), form.benefitUnit)} ${form.benefitVerb || "saved"} per successful ${form.period}`
+    : "Optional";
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/30 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -1030,6 +1067,25 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
             <span className="text-sm font-medium text-emerald-900/70">Notes</span>
             <textarea className="mt-2 min-h-[110px] w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Why does this habit matter to you?" />
           </label>
+          <div className="rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-4">
+            <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-600">Positive benefit</div>
+            <div className="mt-1 text-sm text-zinc-600">Make the upside visible for every successful day or period.</div>
+            <div className="mt-4 grid grid-cols-3 gap-4">
+              <label className="block">
+                <span className="text-sm font-medium text-emerald-900/70">Amount</span>
+                <input type="number" min="0" className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={form.benefitAmount} onChange={(e) => setForm({ ...form, benefitAmount: e.target.value })} placeholder="20" />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-emerald-900/70">Unit</span>
+                <input className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={form.benefitUnit} onChange={(e) => setForm({ ...form, benefitUnit: e.target.value })} placeholder="$ or minutes" />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-emerald-900/70">Verb</span>
+                <input className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={form.benefitVerb} onChange={(e) => setForm({ ...form, benefitVerb: e.target.value })} placeholder="saved" />
+              </label>
+            </div>
+            <div className="mt-4 rounded-2xl border border-zinc-200 bg-white/70 px-4 py-3 text-zinc-700">Benefit preview: <span className="font-semibold">{benefitPreview}</span></div>
+          </div>
         </div>
 
         <div className="mt-8 flex items-center justify-end gap-3">
@@ -1049,6 +1105,13 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
                     : Array.from({ length: DAYS }, () => (form.type === "build" ? false : 0))
                   : Array.from({ length: DAYS }, () => (form.type === "build" ? false : 0)),
                 notes: form.notes || "",
+                benefit: form.benefitAmount && form.benefitUnit.trim()
+                  ? {
+                      amount: Number(form.benefitAmount),
+                      unit: form.benefitUnit.trim(),
+                      verb: form.benefitVerb.trim() || "saved",
+                    }
+                  : null,
                 color: form.type === "build" ? "emerald" : "amber",
               });
               onClose();
