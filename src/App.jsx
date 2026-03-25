@@ -430,15 +430,17 @@ function getBestStreak(items) {
 
 function buildConsecutiveChart(points, axisMode = "days") {
   let streak = 0;
-  return points.map((success, idx) => {
+  return points.map((point, idx) => {
+    const success = typeof point === "object" ? point.success : point;
+    const calendarIndex = typeof point === "object" && point.index !== undefined ? point.index : idx;
     streak = success ? streak + 1 : 0;
     return {
-      day: idx + 1,
+      day: calendarIndex + 1,
       value: streak,
       success,
       dateLabel:
         axisMode === "days"
-          ? getDateLabelFromIndex(idx)
+          ? getDateLabelFromIndex(calendarIndex)
           : `${axisMode === "weeks" ? "Week" : "Month"} ${idx + 1}`,
     };
   });
@@ -448,22 +450,31 @@ function formatStreakLabel(count, unit) {
   return `${count} ${unit}${count === 1 ? "" : "s"} streak`;
 }
 
-function getVisibleMonthLogs(habit, monthKey = getMonthKey()) {
+function getVisibleMonthLogEntries(habit, monthKey = getMonthKey()) {
   const history = getHabitHistory(habit);
   const monthLogs = history[monthKey] ?? habit.logs ?? [];
   const isCurrentMonth = monthKey === getMonthKey();
   const visibleCount = isCurrentMonth ? Math.min(new Date().getDate(), monthLogs.length) : monthLogs.length;
   const startIndex = getHabitStartIndexForMonth(habit, monthKey);
-  return monthLogs.slice(startIndex, visibleCount).filter((value) => value !== null && value !== undefined);
+  return monthLogs
+    .slice(startIndex, visibleCount)
+    .map((value, offset) => ({ index: startIndex + offset, value }))
+    .filter((entry) => entry.value !== null && entry.value !== undefined);
+}
+
+function getBuildValue(value) {
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return Number(value) || 0;
 }
 
 function getBuildMetrics(habit) {
-  const visibleLogs = getVisibleMonthLogs(habit);
-  const successes = visibleLogs.map((v) => Boolean(v));
+  const visibleLogs = getVisibleMonthLogEntries(habit);
+  const successes = visibleLogs.map((entry) => getBuildValue(entry.value) >= habit.target.frequency);
   const recent7 = successes.slice(-7).filter(Boolean).length;
   const totalSuccessful = successes.filter(Boolean).length;
   const currentStreak = getCurrentStreak(successes);
   const bestStreak = getBestStreak(successes);
+  const todayValue = getBuildValue(visibleLogs[visibleLogs.length - 1]?.value);
 
   return {
     currentStreak,
@@ -471,9 +482,10 @@ function getBuildMetrics(habit) {
     consistency7: Math.round((recent7 / Math.min(7, successes.length || 1)) * 100),
     consistency30: Math.round((totalSuccessful / Math.max(successes.length, 1)) * 100),
     completedToday: Boolean(successes[successes.length - 1]),
-    chartData: buildConsecutiveChart(successes, "days"),
+    chartData: buildConsecutiveChart(visibleLogs.map((entry) => ({ index: entry.index, success: getBuildValue(entry.value) >= habit.target.frequency })), "days"),
     summaryValue: formatStreakLabel(currentStreak, "day"),
     totalSuccessful,
+    todayValue,
     chartXAxisMode: "days",
     chartSummaryLabel: `${totalSuccessful} successful days this month`,
     periodSuccesses: recent7,
@@ -483,7 +495,7 @@ function getBuildMetrics(habit) {
 
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
-  const visibleLogs = getVisibleMonthLogs(habit);
+  const visibleLogs = getVisibleMonthLogEntries(habit).map((entry) => entry.value);
   const grouped = chunkByPeriod(visibleLogs, period);
   const compliant = grouped.map((chunk) => chunk.reduce((sum, value) => sum + value, 0) <= frequency);
   const totalSuccessful = compliant.filter(Boolean).length;
@@ -913,7 +925,7 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
             {habit.type === "reduce" && habit.target.period === "week" ? "Measured by week, not individual days" : metrics.summaryValue}
           </div>
         </div>
-        {isBuild ? (
+        {isBuild && habit.target.frequency <= 1 ? (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -931,7 +943,7 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
             }}
             className="rounded-full border border-zinc-300 bg-white px-5 py-2.5 text-base font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
           >
-            Log count
+            {isBuild ? "Log progress" : "Log count"}
           </button>
         )}
       </div>
@@ -996,13 +1008,13 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
               <button onClick={() => onDelete(habit.id)} className="rounded-full border border-red-200 bg-red-50 px-5 py-4 text-lg font-semibold text-red-600 shadow-sm transition hover:bg-red-100">
                 Delete
               </button>
-              {isBuild ? (
+              {isBuild && habit.target.frequency <= 1 ? (
                 <button onClick={() => onQuickToggle(habit.id)} className={`rounded-full px-6 py-4 text-lg font-semibold shadow-sm transition ${metrics.completedToday ? `${colors.button} text-white` : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50"}`}>
                   {metrics.completedToday ? "Logged for today" : "Log today"}
                 </button>
               ) : (
                 <button onClick={() => onOpenLogModal(habit)} className="rounded-full border border-zinc-300 bg-white px-6 py-4 text-lg font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50">
-                  Log actual count
+                  {isBuild ? "Log progress" : "Log actual count"}
                 </button>
               )}
             </div>
@@ -1175,27 +1187,30 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
   );
 }
 
-function ReduceLogModal({ habit, onClose, onSave }) {
-  const lastValue = Array.isArray(habit?.logs) ? habit.logs[habit.logs.length - 1] ?? 0 : 0;
+function HabitLogModal({ habit, onClose, onSave }) {
+  const lastRawValue = Array.isArray(habit?.logs) ? habit.logs[getTodayLogIndex(habit.logs.length)] ?? 0 : 0;
+  const lastValue = habit?.type === "build" ? getBuildValue(lastRawValue) : Number(lastRawValue) || 0;
   const [count, setCount] = useState(lastValue);
   if (!habit) return null;
+  const isBuild = habit.type === "build";
+  const quickOptions = isBuild ? Array.from({ length: Math.max(5, habit.target.frequency + 2) }, (_, index) => index) : [0, 1, 2, 3, 4];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-[2rem] bg-white p-8 shadow-2xl ring-1 ring-black/5">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h3 className="text-3xl font-bold text-emerald-950">Log count</h3>
+            <h3 className="text-3xl font-bold text-emerald-950">{isBuild ? "Log progress" : "Log count"}</h3>
             <p className="mt-1 text-emerald-900/60">{habit.name} · {habit.target.label}</p>
           </div>
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-800"><X /></button>
         </div>
         <label className="mb-6 block">
-          <span className="text-sm font-medium text-emerald-900/70">How many times this {habit.target.period}?</span>
+          <span className="text-sm font-medium text-emerald-900/70">{isBuild ? `How many completions today? Target: ${habit.target.frequency}` : `How many times this ${habit.target.period}?`}</span>
           <input type="number" min="0" className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-2xl outline-none focus:ring-2 focus:ring-emerald-300" value={count} onChange={(e) => setCount(Math.max(0, Number(e.target.value)))} />
         </label>
         <div className="mb-8 grid grid-cols-5 gap-2">
-          {[0, 1, 2, 3, 4].map((n) => (
+          {quickOptions.map((n) => (
             <button key={n} onClick={() => setCount(n)} className={`rounded-2xl border py-3 text-lg font-semibold ${count === n ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-300 bg-white text-zinc-700"}`}>
               {n}
             </button>
@@ -1203,7 +1218,7 @@ function ReduceLogModal({ habit, onClose, onSave }) {
         </div>
         <div className="flex items-center justify-end gap-3">
           <button onClick={onClose} className="rounded-full border border-zinc-300 px-5 py-3 font-medium text-zinc-700">Cancel</button>
-          <button onClick={() => onSave(habit.id, count)} className="rounded-full bg-emerald-500 px-6 py-3 font-semibold text-white hover:bg-emerald-600">Save count</button>
+          <button onClick={() => onSave(habit.id, count)} className="rounded-full bg-emerald-500 px-6 py-3 font-semibold text-white hover:bg-emerald-600">Save</button>
         </div>
       </div>
     </div>
@@ -2509,7 +2524,8 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
       if (habit.id !== habitId || habit.type !== "build") return habit;
       const nextLogs = [...habit.logs];
       const todayIndex = getTodayLogIndex(nextLogs.length);
-      nextLogs[todayIndex] = !nextLogs[todayIndex];
+      const currentValue = getBuildValue(nextLogs[todayIndex]);
+      nextLogs[todayIndex] = currentValue >= 1 ? 0 : 1;
       const monthKey = getMonthKey();
       return {
         ...habit,
@@ -2525,6 +2541,25 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
   const saveReduceCount = (habitId, count) => {
     setHabits((current) => current.map((habit) => {
       if (habit.id !== habitId || habit.type !== "reduce") return habit;
+      const nextLogs = [...habit.logs];
+      const todayIndex = getTodayLogIndex(nextLogs.length);
+      nextLogs[todayIndex] = count;
+      const monthKey = getMonthKey();
+      return {
+        ...habit,
+        logs: nextLogs,
+        history: {
+          ...getHabitHistory(habit),
+          [monthKey]: nextLogs,
+        },
+      };
+    }));
+    setLoggingHabit(null);
+  };
+
+  const saveBuildCount = (habitId, count) => {
+    setHabits((current) => current.map((habit) => {
+      if (habit.id !== habitId || habit.type !== "build") return habit;
       const nextLogs = [...habit.logs];
       const todayIndex = getTodayLogIndex(nextLogs.length);
       nextLogs[todayIndex] = count;
@@ -2570,7 +2605,7 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
     return (
       <>
         <DetailView habit={freshHabit} metrics={getHabitMetrics(freshHabit)} onBack={() => setSelectedHabit(null)} onQuickToggle={quickToggleBuildHabit} onOpenLogModal={setLoggingHabit} onEdit={setEditingHabit} onDelete={handleDeleteHabit} />
-        {loggingHabit ? <ReduceLogModal habit={loggingHabit} onClose={() => setLoggingHabit(null)} onSave={saveReduceCount} /> : null}
+        {loggingHabit ? <HabitLogModal habit={loggingHabit} onClose={() => setLoggingHabit(null)} onSave={loggingHabit.type === "build" ? saveBuildCount : saveReduceCount} /> : null}
         {editingHabit ? <AddHabitModal initialHabit={editingHabit} onClose={() => setEditingHabit(null)} onSave={handleSaveHabit} /> : null}
       </>
     );
@@ -2631,7 +2666,7 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
       </div>
       {addingHabit ? <AddHabitModal onClose={() => setAddingHabit(false)} onSave={handleSaveHabit} /> : null}
       {editingHabit ? <AddHabitModal initialHabit={editingHabit} onClose={() => setEditingHabit(null)} onSave={handleSaveHabit} /> : null}
-      {loggingHabit ? <ReduceLogModal habit={loggingHabit} onClose={() => setLoggingHabit(null)} onSave={saveReduceCount} /> : null}
+      {loggingHabit ? <HabitLogModal habit={loggingHabit} onClose={() => setLoggingHabit(null)} onSave={loggingHabit.type === "build" ? saveBuildCount : saveReduceCount} /> : null}
     </div>
   );
 }
