@@ -140,6 +140,32 @@ function getCurrentMonthLabel() {
   return new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
+function getMonthLengthFromKey(monthKey) {
+  const { year, monthIndex } = parseMonthKey(monthKey);
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function getHabitStartIndexForMonth(habit, monthKey = getMonthKey()) {
+  if (!habit.startDate) return 0;
+  const { year, monthIndex } = parseMonthKey(monthKey);
+  const startDate = new Date(`${habit.startDate}T00:00:00`);
+  const monthStart = new Date(year, monthIndex, 1);
+  const monthEnd = new Date(year, monthIndex, getMonthLengthFromKey(monthKey));
+
+  if (startDate > monthEnd) return DAYS;
+  if (startDate < monthStart) return 0;
+  return Math.max(0, Math.min(startDate.getDate() - 1, DAYS));
+}
+
+function createHabitLogsForMonth(type, startDate, monthKey = getMonthKey()) {
+  const tempHabit = { startDate };
+  const startIndex = getHabitStartIndexForMonth(tempHabit, monthKey);
+  return Array.from({ length: DAYS }, (_, index) => {
+    if (index < startIndex) return null;
+    return type === "build" ? false : 0;
+  });
+}
+
 function getJournalPreview(body = "", maxLength = 110) {
   const cleanBody = body.replace(/\s+/g, " ").trim();
   if (!cleanBody) return "Start writing when you are ready.";
@@ -200,10 +226,12 @@ function getHabitYears(habit) {
 function normalizeHabit(habit) {
   const history = getHabitHistory(habit);
   const monthKey = getMonthKey();
+  const startDate = habit.startDate ?? null;
   return {
     ...habit,
+    startDate,
     history,
-    logs: history[monthKey] ?? habit.logs ?? [],
+    logs: history[monthKey] ?? habit.logs ?? createHabitLogsForMonth(habit.type ?? "build", startDate, monthKey),
   };
 }
 
@@ -420,12 +448,17 @@ function formatStreakLabel(count, unit) {
   return `${count} ${unit}${count === 1 ? "" : "s"} streak`;
 }
 
-function getVisibleMonthLogs(logs = []) {
-  return logs.slice(0, Math.min(new Date().getDate(), logs.length));
+function getVisibleMonthLogs(habit, monthKey = getMonthKey()) {
+  const history = getHabitHistory(habit);
+  const monthLogs = history[monthKey] ?? habit.logs ?? [];
+  const isCurrentMonth = monthKey === getMonthKey();
+  const visibleCount = isCurrentMonth ? Math.min(new Date().getDate(), monthLogs.length) : monthLogs.length;
+  const startIndex = getHabitStartIndexForMonth(habit, monthKey);
+  return monthLogs.slice(startIndex, visibleCount).filter((value) => value !== null && value !== undefined);
 }
 
 function getBuildMetrics(habit) {
-  const visibleLogs = getVisibleMonthLogs(habit.logs);
+  const visibleLogs = getVisibleMonthLogs(habit);
   const successes = visibleLogs.map((v) => Boolean(v));
   const recent7 = successes.slice(-7).filter(Boolean).length;
   const totalSuccessful = successes.filter(Boolean).length;
@@ -450,7 +483,7 @@ function getBuildMetrics(habit) {
 
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
-  const visibleLogs = getVisibleMonthLogs(habit.logs);
+  const visibleLogs = getVisibleMonthLogs(habit);
   const grouped = chunkByPeriod(visibleLogs, period);
   const compliant = grouped.map((chunk) => chunk.reduce((sum, value) => sum + value, 0) <= frequency);
   const totalSuccessful = compliant.filter(Boolean).length;
@@ -487,14 +520,16 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
   const isCurrentMonth = monthKey === getMonthKey();
   const visibleCount = isCurrentMonth ? Math.min(new Date().getDate(), monthLogs.length) : monthLogs.length;
   const visibleLogs = monthLogs.slice(0, visibleCount);
+  const startIndex = getHabitStartIndexForMonth(habit, monthKey);
 
   if (habit.type === "build") {
     return visibleLogs.map((value, index) => ({
       day: index + 1,
+      beforeStart: index < startIndex,
       success: Boolean(value),
       level: Boolean(value) ? 3 : 0,
       dateLabel: getDateLabelFromMonthKey(monthKey, index),
-      statusLabel: Boolean(value) ? "completed" : "missed",
+      statusLabel: index < startIndex ? "tracking not started" : Boolean(value) ? "completed" : "missed",
     }));
   }
 
@@ -503,10 +538,11 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
   if (period === "day") {
     return visibleLogs.map((value, index) => ({
       day: index + 1,
+      beforeStart: index < startIndex,
       success: value <= frequency,
-      level: value <= frequency ? Math.max(1, 3 - Math.min(value, 2)) : 0,
+      level: index < startIndex ? 0 : value <= frequency ? Math.max(1, 3 - Math.min(value, 2)) : 0,
       dateLabel: getDateLabelFromMonthKey(monthKey, index),
-      statusLabel: `${value} / ${frequency} uses`,
+      statusLabel: index < startIndex ? "tracking not started" : `${value} / ${frequency} uses`,
     }));
   }
 
@@ -519,10 +555,11 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
       const runningTotal = partialChunk.reduce((sum, item) => sum + item, 0);
       return {
         day: index + 1,
+        beforeStart: index < startIndex,
         success: weeklyTotal <= frequency,
-        level: runningTotal <= frequency ? Math.max(1, 3 - Math.min(runningTotal, 2)) : 0,
+        level: index < startIndex ? 0 : runningTotal <= frequency ? Math.max(1, 3 - Math.min(runningTotal, 2)) : 0,
         dateLabel: getDateLabelFromMonthKey(monthKey, index),
-        statusLabel: `week total ${runningTotal} / ${frequency}`,
+        statusLabel: index < startIndex ? "tracking not started" : `week total ${runningTotal} / ${frequency}`,
       };
     });
   }
@@ -530,10 +567,11 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
   const monthSuccess = visibleLogs.reduce((sum, value) => sum + value, 0) <= frequency;
   return visibleLogs.map((_, index) => ({
     day: index + 1,
+    beforeStart: index < startIndex,
     success: monthSuccess,
-    level: monthSuccess ? 2 : 0,
+    level: index < startIndex ? 0 : monthSuccess ? 2 : 0,
     dateLabel: getDateLabelFromMonthKey(monthKey, index),
-    statusLabel: monthSuccess ? "within monthly target" : "over monthly target",
+    statusLabel: index < startIndex ? "tracking not started" : monthSuccess ? "within monthly target" : "over monthly target",
   }));
 }
 
@@ -671,6 +709,7 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
   const innerSquareClass = compact ? "rounded-[0.15rem]" : "rounded-[0.4rem]";
 
   const getCubeFillClass = (cube) => {
+    if (cube.beforeStart) return "bg-transparent";
     if (habit.type === "reduce") return cube.success ? "bg-emerald-500" : "bg-rose-500";
     if (!cube.success) return "bg-zinc-100";
     return cube.level >= 3 ? "bg-emerald-500" : cube.level === 2 ? "bg-emerald-400" : "bg-emerald-300";
@@ -720,6 +759,9 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
                 key={`${habit.id}-${cube.day}`}
                 title={`${cube.dateLabel}: ${cube.statusLabel}`}
                 className={`aspect-square border ${squareClass} ${
+                  cube.beforeStart
+                    ? "border-zinc-200/40 bg-transparent"
+                    : 
                   habit.type === "reduce"
                     ? cube.success
                       ? "border-transparent bg-emerald-100"
@@ -1010,6 +1052,7 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
     type: initialHabit?.type ?? "build",
     frequency: initialHabit?.target?.frequency ?? 1,
     period: initialHabit?.target?.period ?? "day",
+    startDate: initialHabit?.startDate ?? getTodayDateString(),
     notes: initialHabit?.notes ?? "",
     benefitAmount: initialHabit?.benefit?.amount ?? "",
     benefitUnit: initialHabit?.benefit?.unit ?? "",
@@ -1062,6 +1105,10 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
               </select>
             </label>
           </div>
+          <label className="block">
+            <span className="text-sm font-medium text-emerald-900/70">Tracking start date</span>
+            <input type="date" className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
+          </label>
           <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-zinc-700">Target preview: <span className="font-semibold">{targetLabel}</span></div>
           <label className="block">
             <span className="text-sm font-medium text-emerald-900/70">Notes</span>
@@ -1098,12 +1145,13 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
                 name: form.name,
                 emoji: form.emoji,
                 type: form.type,
+                startDate: form.startDate || getTodayDateString(),
                 target: { mode: form.type === "build" ? "daily" : "limit", frequency: form.frequency, period: form.period, label: targetLabel },
                 logs: initialHabit
-                  ? initialHabit.type === form.type
+                  ? initialHabit.type === form.type && initialHabit.startDate === (form.startDate || getTodayDateString())
                     ? initialHabit.logs
-                    : Array.from({ length: DAYS }, () => (form.type === "build" ? false : 0))
-                  : Array.from({ length: DAYS }, () => (form.type === "build" ? false : 0)),
+                    : createHabitLogsForMonth(form.type, form.startDate || getTodayDateString())
+                  : createHabitLogsForMonth(form.type, form.startDate || getTodayDateString()),
                 notes: form.notes || "",
                 benefit: form.benefitAmount && form.benefitUnit.trim()
                   ? {
