@@ -495,7 +495,8 @@ function getBuildMetrics(habit) {
 
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
-  const visibleLogs = getVisibleMonthLogEntries(habit).map((entry) => entry.value);
+  const visibleLogEntries = getVisibleMonthLogEntries(habit);
+  const visibleLogs = visibleLogEntries.map((entry) => entry.value);
   const grouped = chunkByPeriod(visibleLogs, period);
   const compliant = grouped.map((chunk) => chunk.reduce((sum, value) => sum + value, 0) <= frequency);
   const totalSuccessful = compliant.filter(Boolean).length;
@@ -504,6 +505,12 @@ function getReduceMetrics(habit) {
   const bestStreak = getBestStreak(compliant);
   const axisMode = period === "week" ? "weeks" : period === "month" ? "months" : "days";
   const streakUnit = period === "week" ? "week" : period === "month" ? "month" : "day";
+  const chartSource = period === "day"
+    ? visibleLogEntries.map((entry) => ({
+        index: entry.index,
+        success: entry.value <= frequency,
+      }))
+    : compliant;
 
   return {
     currentStreak,
@@ -511,7 +518,7 @@ function getReduceMetrics(habit) {
     consistency7: Math.round((recent7 / Math.min(7, compliant.length || 1)) * 100),
     consistency30: Math.round((totalSuccessful / Math.max(compliant.length, 1)) * 100),
     completedToday: Boolean(compliant[compliant.length - 1]),
-    chartData: buildConsecutiveChart(compliant, axisMode),
+    chartData: buildConsecutiveChart(chartSource, axisMode),
     summaryValue: formatStreakLabel(currentStreak, streakUnit),
     targetLabel: label,
     totalSuccessful,
