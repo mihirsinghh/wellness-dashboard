@@ -467,25 +467,111 @@ function getBuildValue(value) {
   return Number(value) || 0;
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getCurrentMonthVisibility(monthKey = getMonthKey(), monthLogsLength = DAYS) {
+  const isCurrentMonth = monthKey === getMonthKey();
+  return {
+    isCurrentMonth,
+    visibleCount: isCurrentMonth ? Math.min(new Date().getDate(), monthLogsLength) : monthLogsLength,
+    todayIndex: isCurrentMonth ? getTodayLogIndex(monthLogsLength) : -1,
+  };
+}
+
+function getBuildDayState(habit, rawValue, index, monthKey = getMonthKey()) {
+  const value = getBuildValue(rawValue);
+  const target = Math.max(1, Number(habit.target.frequency) || 1);
+  const { todayIndex } = getCurrentMonthVisibility(monthKey);
+  const isCurrentDay = index === todayIndex;
+  const fill = clamp(value / target, 0, 1);
+
+  if (value >= target) {
+    return {
+      status: "success",
+      fill,
+      success: true,
+      finalized: true,
+      value,
+    };
+  }
+
+  if (isCurrentDay) {
+    return {
+      status: value > 0 ? "partial" : "pending",
+      fill,
+      success: false,
+      finalized: false,
+      value,
+    };
+  }
+
+  return {
+    status: "failed",
+    fill,
+    success: false,
+    finalized: true,
+    value,
+  };
+}
+
+function getReducePeriodState(total, limit, isCurrentPeriod) {
+  if (total > limit) {
+    return {
+      status: "failed",
+      fill: 1,
+      success: false,
+      finalized: true,
+      total,
+    };
+  }
+
+  if (isCurrentPeriod) {
+    return {
+      status: "pending",
+      fill: 0,
+      success: false,
+      finalized: false,
+      total,
+    };
+  }
+
+  return {
+    status: "success",
+    fill: 1,
+    success: true,
+    finalized: true,
+    total,
+  };
+}
+
 function getBuildMetrics(habit) {
   const visibleLogs = getVisibleMonthLogEntries(habit);
-  const successes = visibleLogs.map((entry) => getBuildValue(entry.value) >= habit.target.frequency);
-  const recent7 = successes.slice(-7).filter(Boolean).length;
-  const totalSuccessful = successes.filter(Boolean).length;
+  const dayStates = visibleLogs.map((entry) => ({
+    index: entry.index,
+    ...getBuildDayState(habit, entry.value, entry.index),
+  }));
+  const finalizedStates = dayStates.filter((entry) => entry.finalized);
+  const successes = finalizedStates.map((entry) => entry.success);
+  const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
+  const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
   const currentStreak = getCurrentStreak(successes);
   const bestStreak = getBestStreak(successes);
-  const todayValue = getBuildValue(visibleLogs[visibleLogs.length - 1]?.value);
+  const todayValue = dayStates[dayStates.length - 1]?.value ?? 0;
+  const todayStatus = dayStates[dayStates.length - 1]?.status ?? "pending";
 
   return {
     currentStreak,
     bestStreak,
-    consistency7: Math.round((recent7 / Math.min(7, successes.length || 1)) * 100),
-    consistency30: Math.round((totalSuccessful / Math.max(successes.length, 1)) * 100),
-    completedToday: Boolean(successes[successes.length - 1]),
-    chartData: buildConsecutiveChart(visibleLogs.map((entry) => ({ index: entry.index, success: getBuildValue(entry.value) >= habit.target.frequency })), "days"),
+    consistency7: Math.round((recent7 / Math.min(7, Math.max(finalizedStates.length, 1))) * 100),
+    consistency30: Math.round((totalSuccessful / Math.max(finalizedStates.length, 1)) * 100),
+    completedToday: todayStatus === "success",
+    chartData: buildConsecutiveChart(finalizedStates.map((entry) => ({ index: entry.index, success: entry.success })), "days"),
     summaryValue: formatStreakLabel(currentStreak, "day"),
     totalSuccessful,
     todayValue,
+    todayStatus,
     chartXAxisMode: "days",
     chartSummaryLabel: `${totalSuccessful} successful days this month`,
     periodSuccesses: recent7,
@@ -498,30 +584,47 @@ function getReduceMetrics(habit) {
   const visibleLogEntries = getVisibleMonthLogEntries(habit);
   const visibleLogs = visibleLogEntries.map((entry) => entry.value);
   const grouped = chunkByPeriod(visibleLogs, period);
-  const compliant = grouped.map((chunk) => chunk.reduce((sum, value) => sum + value, 0) <= frequency);
-  const totalSuccessful = compliant.filter(Boolean).length;
-  const recent7 = compliant.slice(-7).filter(Boolean).length;
+  const currentPeriodIndex = Math.max(0, grouped.length - 1);
+  const periodStates = grouped.map((chunk, index) => {
+    const total = chunk.reduce((sum, value) => sum + value, 0);
+    const state = getReducePeriodState(total, frequency, index === currentPeriodIndex);
+    return { ...state, index };
+  });
+  const finalizedStates = periodStates.filter((entry) => entry.finalized);
+  const compliant = finalizedStates.map((entry) => entry.success);
+  const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
+  const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
   const currentStreak = getCurrentStreak(compliant);
   const bestStreak = getBestStreak(compliant);
   const axisMode = period === "week" ? "weeks" : period === "month" ? "months" : "days";
   const streakUnit = period === "week" ? "week" : period === "month" ? "month" : "day";
   const chartSource = period === "day"
-    ? visibleLogEntries.map((entry) => ({
+    ? visibleLogEntries
+      .map((entry) => ({
         index: entry.index,
-        success: entry.value <= frequency,
+        ...getReducePeriodState(entry.value, frequency, entry.index === getTodayLogIndex(habit.logs.length)),
       }))
-    : compliant;
+      .filter((entry) => entry.finalized)
+      .map((entry) => ({
+        index: entry.index,
+        success: entry.success,
+      }))
+    : periodStates
+      .filter((entry) => entry.finalized)
+      .map((entry) => entry.success);
+  const currentPeriodState = periodStates[currentPeriodIndex] ?? { status: "pending" };
 
   return {
     currentStreak,
     bestStreak,
-    consistency7: Math.round((recent7 / Math.min(7, compliant.length || 1)) * 100),
-    consistency30: Math.round((totalSuccessful / Math.max(compliant.length, 1)) * 100),
-    completedToday: Boolean(compliant[compliant.length - 1]),
+    consistency7: Math.round((recent7 / Math.min(7, Math.max(finalizedStates.length, 1))) * 100),
+    consistency30: Math.round((totalSuccessful / Math.max(finalizedStates.length, 1)) * 100),
+    completedToday: currentPeriodState.status === "success",
     chartData: buildConsecutiveChart(chartSource, axisMode),
     summaryValue: formatStreakLabel(currentStreak, streakUnit),
     targetLabel: label,
     totalSuccessful,
+    todayStatus: currentPeriodState.status,
     chartXAxisMode: axisMode,
     chartSummaryLabel: `${totalSuccessful} successful ${period === "week" ? "weeks" : period === "month" ? "months" : "days"} this month`,
     periodSuccesses: grouped[grouped.length - 1]?.reduce((sum, value) => sum + value, 0) ?? 0,
@@ -536,8 +639,7 @@ function getHabitMetrics(habit) {
 function getHabitCubeData(habit, monthKey = getMonthKey()) {
   const history = getHabitHistory(habit);
   const monthLogs = history[monthKey] ?? [];
-  const isCurrentMonth = monthKey === getMonthKey();
-  const visibleCount = isCurrentMonth ? Math.min(new Date().getDate(), monthLogs.length) : monthLogs.length;
+  const { todayIndex, visibleCount } = getCurrentMonthVisibility(monthKey, monthLogs.length);
   const visibleLogs = monthLogs.slice(0, visibleCount);
   const startIndex = getHabitStartIndexForMonth(habit, monthKey);
 
@@ -545,10 +647,18 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
     return visibleLogs.map((value, index) => ({
       day: index + 1,
       beforeStart: index < startIndex,
-      success: Boolean(value),
-      level: Boolean(value) ? 3 : 0,
+      ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : getBuildDayState(habit, value, index, monthKey)),
       dateLabel: getDateLabelFromMonthKey(monthKey, index),
-      statusLabel: index < startIndex ? "tracking not started" : Boolean(value) ? "completed" : "missed",
+      statusLabel:
+        index < startIndex
+          ? "tracking not started"
+          : (() => {
+              const state = getBuildDayState(habit, value, index, monthKey);
+              if (state.status === "success") return `${state.value} / ${habit.target.frequency} completed`;
+              if (state.status === "partial") return `${state.value} / ${habit.target.frequency} completed so far`;
+              if (state.status === "pending") return "not started yet today";
+              return `${state.value} / ${habit.target.frequency} completed`;
+            })(),
     }));
   }
 
@@ -558,10 +668,16 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
     return visibleLogs.map((value, index) => ({
       day: index + 1,
       beforeStart: index < startIndex,
-      success: value <= frequency,
-      level: index < startIndex ? 0 : value <= frequency ? Math.max(1, 3 - Math.min(value, 2)) : 0,
+      ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : getReducePeriodState(value, frequency, index === todayIndex)),
       dateLabel: getDateLabelFromMonthKey(monthKey, index),
-      statusLabel: index < startIndex ? "tracking not started" : `${value} / ${frequency} uses`,
+      statusLabel:
+        index < startIndex
+          ? "tracking not started"
+          : (() => {
+              const state = getReducePeriodState(value, frequency, index === todayIndex);
+              if (state.status === "pending") return `${value} / ${frequency} uses so far`;
+              return `${value} / ${frequency} uses`;
+            })(),
     }));
   }
 
@@ -572,33 +688,40 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
       const partialChunk = visibleLogs.slice(chunkStart, index + 1);
       const weeklyTotal = chunk.reduce((sum, item) => sum + item, 0);
       const runningTotal = partialChunk.reduce((sum, item) => sum + item, 0);
+      const isCurrentWeek = Math.floor(index / 7) === Math.floor(todayIndex / 7) && monthKey === getMonthKey();
+      const state = getReducePeriodState(weeklyTotal > frequency ? weeklyTotal : runningTotal, frequency, isCurrentWeek && weeklyTotal <= frequency);
       return {
         day: index + 1,
         beforeStart: index < startIndex,
-        success: weeklyTotal <= frequency,
-        level: index < startIndex ? 0 : runningTotal <= frequency ? Math.max(1, 3 - Math.min(runningTotal, 2)) : 0,
+        ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : state),
         dateLabel: getDateLabelFromMonthKey(monthKey, index),
         statusLabel: index < startIndex ? "tracking not started" : `week total ${runningTotal} / ${frequency}`,
       };
     });
   }
 
-  const monthSuccess = visibleLogs.reduce((sum, value) => sum + value, 0) <= frequency;
+  const monthTotal = visibleLogs.reduce((sum, value) => sum + value, 0);
+  const monthState = getReducePeriodState(monthTotal, frequency, monthKey === getMonthKey() && monthTotal <= frequency);
   return visibleLogs.map((_, index) => ({
     day: index + 1,
     beforeStart: index < startIndex,
-    success: monthSuccess,
-    level: index < startIndex ? 0 : monthSuccess ? 2 : 0,
+    ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : monthState),
     dateLabel: getDateLabelFromMonthKey(monthKey, index),
-    statusLabel: index < startIndex ? "tracking not started" : monthSuccess ? "within monthly target" : "over monthly target",
+    statusLabel:
+      index < startIndex
+        ? "tracking not started"
+        : monthState.status === "pending"
+          ? "within monthly target so far"
+          : monthState.status === "success"
+            ? "within monthly target"
+            : "over monthly target",
   }));
 }
 
 function getHabitWeekData(habit, monthKey = getMonthKey()) {
   const history = getHabitHistory(habit);
   const monthLogs = history[monthKey] ?? [];
-  const isCurrentMonth = monthKey === getMonthKey();
-  const visibleCount = isCurrentMonth ? Math.min(new Date().getDate(), monthLogs.length) : monthLogs.length;
+  const { visibleCount } = getCurrentMonthVisibility(monthKey, monthLogs.length);
   const visibleLogs = monthLogs.slice(0, visibleCount);
   const weeklyChunks = [];
 
@@ -606,11 +729,14 @@ function getHabitWeekData(habit, monthKey = getMonthKey()) {
     const chunk = visibleLogs.slice(start, start + 7);
     const total = chunk.reduce((sum, value) => sum + value, 0);
     const end = Math.min(start + chunk.length - 1, monthLogs.length - 1);
+    const isCurrentWeek = monthKey === getMonthKey() && end >= getTodayLogIndex(monthLogs.length);
+    const state = getReducePeriodState(total, habit.target.frequency, isCurrentWeek);
 
     weeklyChunks.push({
       week: Math.floor(start / 7) + 1,
       total,
-      success: total <= habit.target.frequency,
+      success: state.success,
+      status: state.status,
       startLabel: getDateLabelFromMonthKey(monthKey, start),
       endLabel: getDateLabelFromMonthKey(monthKey, end),
     });
@@ -729,9 +855,18 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
 
   const getCubeFillClass = (cube) => {
     if (cube.beforeStart) return "bg-transparent";
-    if (habit.type === "reduce") return cube.success ? "bg-emerald-500" : "bg-rose-500";
-    if (!cube.success) return "bg-zinc-100";
-    return cube.level >= 3 ? "bg-emerald-500" : cube.level === 2 ? "bg-emerald-400" : "bg-emerald-300";
+    if (cube.status === "success") return "bg-emerald-500";
+    if (cube.status === "failed") return "bg-rose-500";
+    if (cube.status === "partial") return "bg-amber-400";
+    return "bg-transparent";
+  };
+
+  const getCubeShellClass = (cube) => {
+    if (cube.beforeStart) return "border-zinc-200/40 bg-transparent";
+    if (cube.status === "success") return habit.type === "reduce" ? "border-transparent bg-emerald-100" : `${colors.pill} border-transparent`;
+    if (cube.status === "failed") return "border-transparent bg-rose-100";
+    if (cube.status === "partial") return "border-amber-200 bg-amber-50";
+    return "border-zinc-200 bg-white";
   };
 
   return (
@@ -750,7 +885,11 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
                 key={`${habit.id}-${monthKey}-week-${tile.week}`}
                 title={`${tile.startLabel} - ${tile.endLabel}: ${tile.total} / ${habit.target.frequency} uses`}
                 className={`rounded-[1rem] border px-4 py-3 ${
-                  tile.success ? "border-emerald-300 bg-emerald-100/80" : "border-rose-300 bg-rose-100/80"
+                  tile.status === "success"
+                    ? "border-emerald-300 bg-emerald-100/80"
+                    : tile.status === "failed"
+                      ? "border-rose-300 bg-rose-100/80"
+                      : "border-zinc-300 bg-zinc-100/80"
                 }`}
               >
                 <div className="flex items-center justify-between gap-3">
@@ -758,7 +897,13 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Week {tile.week}</div>
                     <div className="mt-1 text-sm text-zinc-700">{tile.startLabel} - {tile.endLabel}</div>
                   </div>
-                  <div className={`rounded-full px-3 py-1 text-sm font-semibold ${tile.success ? "bg-emerald-500 text-black" : "bg-rose-500 text-white"}`}>
+                  <div className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                    tile.status === "success"
+                      ? "bg-emerald-500 text-black"
+                      : tile.status === "failed"
+                        ? "bg-rose-500 text-white"
+                        : "bg-zinc-300 text-zinc-700"
+                  }`}>
                     {tile.total} / {habit.target.frequency}
                   </div>
                 </div>
@@ -777,22 +922,14 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
               <div
                 key={`${habit.id}-${cube.day}`}
                 title={`${cube.dateLabel}: ${cube.statusLabel}`}
-                className={`aspect-square border ${squareClass} ${
-                  cube.beforeStart
-                    ? "border-zinc-200/40 bg-transparent"
-                    : 
-                  habit.type === "reduce"
-                    ? cube.success
-                      ? "border-transparent bg-emerald-100"
-                      : "border-transparent bg-rose-100"
-                    : cube.success
-                      ? `${colors.pill} border-transparent`
-                      : "border-zinc-200 bg-white"
-                }`}
+                className={`aspect-square border ${squareClass} ${getCubeShellClass(cube)}`}
               >
                 <div
                   className={`h-full w-full ${innerSquareClass} ${getCubeFillClass(cube)}`}
-                  style={{ opacity: cube.success ? 1 : 0.7 }}
+                  style={{
+                    opacity: cube.status === "pending" ? 0 : 1,
+                    width: `${Math.round((cube.fill ?? 0) * 100)}%`,
+                  }}
                 />
               </div>
             ))}
