@@ -1464,24 +1464,62 @@ function normalizeWorkoutFolders(folders = []) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+const DEFAULT_WORKOUT_COLUMNS = [
+  { id: "exercise", label: "Exercise", placeholder: "Exercise", widthClass: "min-w-[220px]" },
+  { id: "sets", label: "Sets", placeholder: "4", widthClass: "w-20" },
+  { id: "reps", label: "Reps", placeholder: "8-10", widthClass: "w-24" },
+  { id: "load", label: "Load", placeholder: "135 lb", widthClass: "w-28" },
+  { id: "rest", label: "Rest", placeholder: "90 sec", widthClass: "w-28" },
+  { id: "notes", label: "Notes", placeholder: "Technique cue", widthClass: "min-w-[220px]" },
+];
+
+function getDefaultWorkoutColumns() {
+  return DEFAULT_WORKOUT_COLUMNS.map((column) => ({ ...column }));
+}
+
+function normalizeWorkoutColumns(columns = []) {
+  if (!Array.isArray(columns) || !columns.length) return getDefaultWorkoutColumns();
+  return columns.map((column, index) => ({
+    id: column.id ?? `workout-column-${Date.now()}-${index}`,
+    label: column.label?.trim() || `Column ${index + 1}`,
+    placeholder: column.placeholder ?? "",
+    widthClass: column.widthClass ?? "w-32",
+  }));
+}
+
+function createWorkoutExerciseRow(columns, exercise = {}, rowIndex = 0) {
+  const legacyValues = {
+    exercise: exercise.exercise ?? "",
+    sets: exercise.sets ?? "",
+    reps: exercise.reps ?? "",
+    load: exercise.load ?? "",
+    rest: exercise.rest ?? "",
+    notes: exercise.notes ?? "",
+  };
+
+  const values = Object.fromEntries(columns.map((column) => {
+    const rawValue = exercise.values?.[column.id] ?? legacyValues[column.id] ?? "";
+    return [column.id, typeof rawValue === "string" ? rawValue : `${rawValue ?? ""}`];
+  }));
+
+  return {
+    id: exercise.id ?? `exercise-${Date.now()}-${rowIndex}`,
+    values,
+  };
+}
+
 function normalizeWorkoutPlan(plan, index = 0) {
+  const columns = normalizeWorkoutColumns(plan.columns);
   return {
     id: plan.id ?? `workout-${Date.now()}-${index}`,
     name: plan.name?.trim() || `Workout ${index + 1}`,
     folderId: plan.folderId ?? null,
     notes: plan.notes ?? "",
     updatedAt: plan.updatedAt ?? new Date().toISOString(),
+    columns,
     exercises: Array.isArray(plan.exercises) && plan.exercises.length
-      ? plan.exercises.map((exercise, rowIndex) => ({
-          id: exercise.id ?? `exercise-${Date.now()}-${rowIndex}`,
-          exercise: exercise.exercise ?? "",
-          sets: exercise.sets ?? "",
-          reps: exercise.reps ?? "",
-          load: exercise.load ?? "",
-          rest: exercise.rest ?? "",
-          notes: exercise.notes ?? "",
-        }))
-      : [{ id: `exercise-${Date.now()}-0`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }],
+      ? plan.exercises.map((exercise, rowIndex) => createWorkoutExerciseRow(columns, exercise, rowIndex))
+      : [createWorkoutExerciseRow(columns)],
   };
 }
 
@@ -1808,6 +1846,7 @@ function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack
 function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset }) {
   const [activeFolderId, setActiveFolderId] = useState("all");
   const [newFolderName, setNewFolderName] = useState("");
+  const [newColumnName, setNewColumnName] = useState("");
   const [editingFolderId, setEditingFolderId] = useState(null);
   const [editingFolderName, setEditingFolderName] = useState("");
   const [selectedPlanId, setSelectedPlanId] = useState(plans[0]?.id ?? null);
@@ -1843,6 +1882,7 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
   const handleReset = () => {
     setActiveFolderId("all");
     setNewFolderName("");
+    setNewColumnName("");
     setEditingFolderId(null);
     setEditingFolderName("");
     setSelectedPlanId(null);
@@ -1903,19 +1943,17 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
     const cleanedExercises = draft.exercises
       .map((exercise) => ({
         ...exercise,
-        exercise: exercise.exercise.trim(),
-        sets: exercise.sets.trim(),
-        reps: exercise.reps.trim(),
-        load: exercise.load.trim(),
-        rest: exercise.rest.trim(),
-        notes: exercise.notes.trim(),
+        values: Object.fromEntries(
+          draft.columns.map((column) => [column.id, (exercise.values?.[column.id] ?? "").trim()]),
+        ),
       }))
-      .filter((exercise) => exercise.exercise || exercise.sets || exercise.reps || exercise.load || exercise.rest || exercise.notes);
+      .filter((exercise) => Object.values(exercise.values).some(Boolean));
 
     const nextPlan = normalizeWorkoutPlan({
       ...draft,
       name: trimmedName,
-      exercises: cleanedExercises.length ? cleanedExercises : [{ exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }],
+      columns: draft.columns,
+      exercises: cleanedExercises.length ? cleanedExercises : [createWorkoutExerciseRow(draft.columns)],
       updatedAt: new Date().toISOString(),
     });
 
@@ -1935,7 +1973,11 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
   const updateExercise = (exerciseId, key, value) => {
     setDraft((current) => ({
       ...current,
-      exercises: current.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, [key]: value } : exercise)),
+      exercises: current.exercises.map((exercise) => (
+        exercise.id === exerciseId
+          ? { ...exercise, values: { ...exercise.values, [key]: value } }
+          : exercise
+      )),
     }));
   };
 
@@ -1944,7 +1986,7 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
       ...current,
       exercises: [
         ...current.exercises,
-        { id: `exercise-${Date.now()}`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" },
+        createWorkoutExerciseRow(current.columns, { id: `exercise-${Date.now()}` }),
       ],
     }));
   };
@@ -1953,9 +1995,49 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
     setDraft((current) => ({
       ...current,
       exercises: current.exercises.length === 1
-        ? [{ id: `exercise-${Date.now()}`, exercise: "", sets: "", reps: "", load: "", rest: "", notes: "" }]
+        ? [createWorkoutExerciseRow(current.columns, { id: `exercise-${Date.now()}` })]
         : current.exercises.filter((exercise) => exercise.id !== exerciseId),
     }));
+  };
+
+  const addExerciseColumn = () => {
+    const trimmed = newColumnName.trim();
+    if (!trimmed) return;
+    setDraft((current) => {
+      const nextColumn = {
+        id: `workout-column-${Date.now()}`,
+        label: trimmed,
+        placeholder: trimmed,
+        widthClass: "w-32",
+      };
+      return {
+        ...current,
+        columns: [...current.columns, nextColumn],
+        exercises: current.exercises.map((exercise) => ({
+          ...exercise,
+          values: {
+            ...exercise.values,
+            [nextColumn.id]: "",
+          },
+        })),
+      };
+    });
+    setNewColumnName("");
+  };
+
+  const removeExerciseColumn = (columnId) => {
+    setDraft((current) => {
+      if (current.columns.length === 1) return current;
+      const nextColumns = current.columns.filter((column) => column.id !== columnId);
+      return {
+        ...current,
+        columns: nextColumns,
+        exercises: current.exercises.map((exercise) => ({
+          ...exercise,
+          values: Object.fromEntries(nextColumns.map((column) => [column.id, exercise.values?.[column.id] ?? ""])),
+        })),
+      };
+    });
   };
 
   return (
@@ -2115,6 +2197,9 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
                       <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">
                         Updated {new Date(selectedPlan.updatedAt).toLocaleDateString()}
                       </div>
+                      <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">
+                        {selectedPlan.columns.length} columns
+                      </div>
                     </div>
                   </div>
                   <button onClick={() => setIsEditingPlan(true)} className="rounded-2xl bg-amber-500 px-5 py-3 font-semibold text-white hover:bg-amber-600">
@@ -2128,23 +2213,19 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
                   <table className="min-w-full border-collapse text-left">
                     <thead>
                       <tr className="border-b border-zinc-200 text-sm uppercase tracking-[0.16em] text-zinc-500">
-                        <th className="px-4 py-4">Exercise</th>
-                        <th className="px-4 py-4">Sets</th>
-                        <th className="px-4 py-4">Reps</th>
-                        <th className="px-4 py-4">Load</th>
-                        <th className="px-4 py-4">Rest</th>
-                        <th className="px-4 py-4">Notes</th>
+                        {selectedPlan.columns.map((column) => (
+                          <th key={column.id} className="px-4 py-4">{column.label}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {selectedPlan.exercises.map((exercise) => (
                         <tr key={exercise.id} className="border-b border-zinc-200 last:border-b-0">
-                          <td className="px-4 py-4 font-semibold text-zinc-950">{exercise.exercise || "Untitled exercise"}</td>
-                          <td className="px-4 py-4 text-zinc-700">{exercise.sets || "-"}</td>
-                          <td className="px-4 py-4 text-zinc-700">{exercise.reps || "-"}</td>
-                          <td className="px-4 py-4 text-zinc-700">{exercise.load || "-"}</td>
-                          <td className="px-4 py-4 text-zinc-700">{exercise.rest || "-"}</td>
-                          <td className="px-4 py-4 text-zinc-700">{exercise.notes || "-"}</td>
+                          {selectedPlan.columns.map((column, columnIndex) => (
+                            <td key={column.id} className={`px-4 py-4 ${columnIndex === 0 ? "font-semibold text-zinc-950" : "text-zinc-700"}`}>
+                              {exercise.values?.[column.id] || "-"}
+                            </td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>
@@ -2158,7 +2239,10 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
                     <div className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-700">Planner editor</div>
                     <div className="mt-2 text-3xl font-semibold text-zinc-950">{selectedPlan ? "Edit your workout sheet" : "Create a new workout sheet"}</div>
                   </div>
-                  <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">{draft.exercises.length} rows</div>
+                  <div className="flex flex-wrap gap-2">
+                    <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">{draft.exercises.length} rows</div>
+                    <div className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-700">{draft.columns.length} columns</div>
+                  </div>
                 </div>
 
                 <div className="mt-6 grid gap-4">
@@ -2185,40 +2269,48 @@ function WorkoutPanel({ plans, setPlans, folders, setFolders, onBack, onReset })
                     className="min-h-[120px] rounded-[1.5rem] border border-zinc-200 px-4 py-4 text-base leading-7 outline-none focus:ring-2 focus:ring-amber-300"
                   />
 
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      value={newColumnName}
+                      onChange={(event) => setNewColumnName(event.target.value)}
+                      placeholder="New column name"
+                      className="rounded-2xl border border-zinc-200 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-amber-300"
+                    />
+                    <button onClick={addExerciseColumn} className="rounded-2xl border border-zinc-200 px-4 py-3 font-semibold text-zinc-700 hover:bg-zinc-50">
+                      Add column
+                    </button>
+                  </div>
+
                   <div className="overflow-x-auto rounded-[1.5rem] border border-zinc-200 bg-zinc-50">
                     <table className="min-w-[960px] border-collapse text-left">
                       <thead>
                         <tr className="border-b border-zinc-200 text-sm uppercase tracking-[0.16em] text-zinc-500">
-                          <th className="px-4 py-4">Exercise</th>
-                          <th className="px-4 py-4">Sets</th>
-                          <th className="px-4 py-4">Reps</th>
-                          <th className="px-4 py-4">Load</th>
-                          <th className="px-4 py-4">Rest</th>
-                          <th className="px-4 py-4">Notes</th>
+                          {draft.columns.map((column) => (
+                            <th key={column.id} className="px-4 py-4">
+                              <div className="flex items-center gap-2">
+                                <span>{column.label}</span>
+                                <button onClick={() => removeExerciseColumn(column.id)} className="rounded-full border border-zinc-200 bg-white p-1 text-zinc-400 hover:text-red-500" title={`Delete ${column.label} column`}>
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </th>
+                          ))}
                           <th className="px-4 py-4">Row</th>
                         </tr>
                       </thead>
                       <tbody>
                         {draft.exercises.map((exercise) => (
                           <tr key={exercise.id} className="border-b border-zinc-200 last:border-b-0">
-                            <td className="px-4 py-3">
-                              <input value={exercise.exercise} onChange={(event) => updateExercise(exercise.id, "exercise", event.target.value)} className="w-full rounded-xl border border-zinc-200 px-3 py-2" placeholder="Exercise" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input value={exercise.sets} onChange={(event) => updateExercise(exercise.id, "sets", event.target.value)} className="w-20 rounded-xl border border-zinc-200 px-3 py-2" placeholder="4" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input value={exercise.reps} onChange={(event) => updateExercise(exercise.id, "reps", event.target.value)} className="w-24 rounded-xl border border-zinc-200 px-3 py-2" placeholder="8-10" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input value={exercise.load} onChange={(event) => updateExercise(exercise.id, "load", event.target.value)} className="w-28 rounded-xl border border-zinc-200 px-3 py-2" placeholder="135 lb" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input value={exercise.rest} onChange={(event) => updateExercise(exercise.id, "rest", event.target.value)} className="w-28 rounded-xl border border-zinc-200 px-3 py-2" placeholder="90 sec" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input value={exercise.notes} onChange={(event) => updateExercise(exercise.id, "notes", event.target.value)} className="w-full rounded-xl border border-zinc-200 px-3 py-2" placeholder="Technique cue" />
-                            </td>
+                            {draft.columns.map((column) => (
+                              <td key={column.id} className="px-4 py-3">
+                                <input
+                                  value={exercise.values?.[column.id] ?? ""}
+                                  onChange={(event) => updateExercise(exercise.id, column.id, event.target.value)}
+                                  className={`${column.widthClass ?? "w-32"} rounded-xl border border-zinc-200 px-3 py-2`}
+                                  placeholder={column.placeholder || column.label}
+                                />
+                              </td>
+                            ))}
                             <td className="px-4 py-3">
                               <button onClick={() => removeExerciseRow(exercise.id)} className="rounded-full border border-zinc-200 bg-white p-2 text-zinc-400 hover:text-red-500">
                                 <Trash2 size={15} />
