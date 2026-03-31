@@ -83,8 +83,8 @@ function isDateWithinLastDays(dateString, days) {
   return date >= start;
 }
 
-function buildBinaryHistory(indices = []) {
-  return Array.from({ length: DAYS }, (_, i) => indices.includes(i));
+function buildBinaryHistory(indices = [], monthKey = getMonthKey()) {
+  return Array.from({ length: getMonthLengthFromKey(monthKey) }, (_, i) => indices.includes(i));
 }
 
 function getDateLabelFromIndex(index) {
@@ -151,18 +151,31 @@ function getHabitStartIndexForMonth(habit, monthKey = getMonthKey()) {
   const startDate = new Date(`${habit.startDate}T00:00:00`);
   const monthStart = new Date(year, monthIndex, 1);
   const monthEnd = new Date(year, monthIndex, getMonthLengthFromKey(monthKey));
+  const monthLength = getMonthLengthFromKey(monthKey);
 
-  if (startDate > monthEnd) return DAYS;
+  if (startDate > monthEnd) return monthLength;
   if (startDate < monthStart) return 0;
-  return Math.max(0, Math.min(startDate.getDate() - 1, DAYS));
+  return Math.max(0, Math.min(startDate.getDate() - 1, monthLength));
 }
 
 function createHabitLogsForMonth(type, startDate, monthKey = getMonthKey()) {
   const tempHabit = { startDate };
   const startIndex = getHabitStartIndexForMonth(tempHabit, monthKey);
-  return Array.from({ length: DAYS }, (_, index) => {
+  return Array.from({ length: getMonthLengthFromKey(monthKey) }, (_, index) => {
     if (index < startIndex) return null;
     return type === "build" ? false : 0;
+  });
+}
+
+function ensureHabitMonthLogs(habit, monthLogs = [], monthKey = getMonthKey()) {
+  const normalizedLogs = Array.isArray(monthLogs) ? monthLogs : [];
+  const monthLength = getMonthLengthFromKey(monthKey);
+  const startIndex = getHabitStartIndexForMonth(habit, monthKey);
+  return Array.from({ length: monthLength }, (_, index) => {
+    if (index < startIndex) return null;
+    const existingValue = normalizedLogs[index];
+    if (existingValue !== undefined) return existingValue;
+    return habit.type === "build" ? false : 0;
   });
 }
 
@@ -227,11 +240,22 @@ function normalizeHabit(habit) {
   const history = getHabitHistory(habit);
   const monthKey = getMonthKey();
   const startDate = habit.startDate ?? null;
-  return {
+  const normalizedHabit = {
     ...habit,
     startDate,
-    history,
-    logs: history[monthKey] ?? habit.logs ?? createHabitLogsForMonth(habit.type ?? "build", startDate, monthKey),
+    type: habit.type ?? "build",
+  };
+  const normalizedHistory = Object.fromEntries(
+    Object.entries(history).map(([historyMonthKey, monthLogs]) => [
+      historyMonthKey,
+      ensureHabitMonthLogs(normalizedHabit, monthLogs, historyMonthKey),
+    ]),
+  );
+  return {
+    ...normalizedHabit,
+    startDate,
+    history: normalizedHistory,
+    logs: normalizedHistory[monthKey] ?? createHabitLogsForMonth(normalizedHabit.type, startDate, monthKey),
   };
 }
 
@@ -3299,6 +3323,7 @@ export default function StabilityDashboardApp() {
   const [pendingSnapshot, setPendingSnapshot] = useState(() => loadLocalDashboardState());
   const skipNextSaveRef = useRef(true);
   const saveTimeoutRef = useRef(null);
+  const currentUserId = session?.user?.id ?? null;
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase) return undefined;
@@ -3391,7 +3416,7 @@ export default function StabilityDashboardApp() {
     return () => {
       ignore = true;
     };
-  }, [session]);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
