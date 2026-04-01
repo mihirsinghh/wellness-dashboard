@@ -155,6 +155,30 @@ function addDays(date, amount) {
   return next;
 }
 
+function addPeriod(date, period, count = 1) {
+  if (period === "week") return addDays(date, 7 * count);
+  if (period === "month") {
+    const baseYear = date.getFullYear();
+    const baseMonth = date.getMonth();
+    const targetMonthIndex = baseMonth + count;
+    const targetYear = baseYear + Math.floor(targetMonthIndex / 12);
+    const normalizedTargetMonth = ((targetMonthIndex % 12) + 12) % 12;
+    const maxDay = new Date(targetYear, normalizedTargetMonth + 1, 0).getDate();
+    return new Date(targetYear, normalizedTargetMonth, Math.min(date.getDate(), maxDay));
+  }
+  return addDays(date, count);
+}
+
+function isSameDay(left, right) {
+  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate();
+}
+
+function isDateInCurrentMonth(dateString) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const now = new Date();
+  return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+}
+
 function getDayNumber(date) {
   const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return Math.floor((normalized.getTime() - EPOCH_START.getTime()) / DAY_MS);
@@ -639,6 +663,32 @@ function getReduceUsageDates(habit) {
   });
 }
 
+function getReduceCooldownPeriods(habit) {
+  const period = habit.target.period;
+  const uses = getReduceUsageDates(habit).sort((a, b) => a - b);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return uses.map((useDate, index) => {
+    const nextUse = uses[index + 1] ?? null;
+    const allowedDate = addPeriod(useDate, period);
+    const failed = nextUse && nextUse < allowedDate;
+    const completedSuccessfully = !failed && allowedDate <= today;
+
+    return {
+      index,
+      start: useDate,
+      end: failed ? nextUse : allowedDate,
+      success: completedSuccessfully,
+      failed,
+      completed: failed || completedSuccessfully,
+      status: failed ? "failed" : completedSuccessfully ? "success" : "pending",
+      dateLabel: `${formatDateLabel(useDate)} - ${formatDateLabel(failed ? nextUse : allowedDate)}`,
+      nextAllowedDate: failed ? addPeriod(nextUse, period) : allowedDate,
+    };
+  });
+}
+
 function getNextAllowedReduceDate(habit) {
   const period = habit.target.period;
   if (period === "day") return new Date();
@@ -656,7 +706,7 @@ function getNextAllowedReduceDate(habit) {
   if (currentWindowUses.length < limit) return today;
 
   const releaseIndex = currentWindowUses.length - limit;
-  return addDays(currentWindowUses[releaseIndex], periodLength);
+  return addPeriod(currentWindowUses[releaseIndex], period);
 }
 
 function getBuildValue(value) {
@@ -783,10 +833,60 @@ function getBuildMetrics(habit) {
 
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
-  const allReducePeriods = getAllReducePeriodEntries(habit);
-  const currentPeriodIndex = Math.max(0, allReducePeriods.findIndex((entry) => entry.isCurrentPeriod));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  if (period !== "day" && frequency === 1) {
+    const cooldownPeriods = getReduceCooldownPeriods(habit);
+    const completedPeriods = cooldownPeriods.filter((entry) => entry.completed);
+    const successfulPeriods = completedPeriods.filter((entry) => entry.success);
+    const successStates = completedPeriods.map((entry) => entry.success);
+    const currentStreak = getCurrentStreak(successStates);
+    const bestStreak = getBestStreak(successStates);
+    const nextAllowedDate = cooldownPeriods.at(-1)?.nextAllowedDate ?? today;
+    const recentPeriods = completedPeriods.slice(-8).map((entry, idx) => ({
+      ...entry,
+      index: idx,
+      total: entry.failed ? 2 : 1,
+    }));
+    const chartData = buildConsecutiveChart(
+      completedPeriods.slice(-8).map((entry, idx) => ({
+        index: idx,
+        success: entry.success,
+        dateLabel: entry.dateLabel,
+      })),
+      period === "week" ? "weeks" : "months",
+    );
+
+    return {
+      currentStreak,
+      bestStreak,
+      consistency7: Math.round((successfulPeriods.length / Math.max(completedPeriods.length, 1)) * 100),
+      consistency30: Math.round((successfulPeriods.length / Math.max(completedPeriods.length, 1)) * 100),
+      completedToday: false,
+      chartData,
+      summaryValue: formatStreakLabel(currentStreak, period),
+      targetLabel: label,
+      totalSuccessful: successfulPeriods.length,
+      todayStatus: "pending",
+      chartXAxisMode: period === "week" ? "weeks" : "months",
+      chartSummaryLabel: `${successfulPeriods.length} successful ${period}s`,
+      periodSuccesses: successfulPeriods.length,
+      periodSummaryLabel: `Successful ${period}s`,
+      recentPeriods,
+      successfulPeriodsCount: successfulPeriods.length,
+      nextAllowedDate,
+      nextAllowedLabel: formatDateLabel(nextAllowedDate),
+      nextAllowedDescription: isSameDay(nextAllowedDate, today)
+        ? "You can have this again today."
+        : `Next allowed on ${formatDateLabel(nextAllowedDate)}.`,
+      nextAllowedToday: isSameDay(nextAllowedDate, today),
+      currentPeriodLabel: cooldownPeriods.at(-1)?.dateLabel ?? null,
+    };
+  }
+
+  const allReducePeriods = getAllReducePeriodEntries(habit);
+  const currentPeriodIndex = Math.max(0, allReducePeriods.findIndex((entry) => entry.isCurrentPeriod));
   const periodStates =
     period === "day"
       ? allReducePeriods.map((entry) => ({
@@ -1733,9 +1833,6 @@ function getTaskMetrics(tasks, period = "week") {
 function getDashboardOverviewMetrics(habits, tasks, expenses) {
   const todayHabitCount = habits.filter((habit) => getHabitMetrics(habit).completedToday).length;
   const weekHabitCount = habits.reduce((sum, habit) => sum + getHabitMetrics(habit).periodSuccesses, 0);
-  const todayExpense = expenses
-    .filter((expense) => isDateToday(expense.date))
-    .reduce((sum, expense) => sum + expense.amount, 0);
   const weeklyExpense = expenses
     .filter((expense) => isDateWithinLastDays(expense.date, 7))
     .reduce((sum, expense) => sum + expense.amount, 0);
@@ -1745,7 +1842,6 @@ function getDashboardOverviewMetrics(habits, tasks, expenses) {
   return {
     todayHabitCount,
     weekHabitCount,
-    todayExpense,
     weeklyExpense,
     weeklyTaskRate: weeklyTasks.completionRate,
     weeklyTasksCompleted: weeklyTasks.completed,
@@ -1989,7 +2085,7 @@ function ExpensePanel({ expenses, setExpenses, categories, setCategories, onBack
   const visibleExpenses = useMemo(() => expenses.filter((expense) => {
     const expenseDate = new Date(`${expense.date ?? getTodayDateString()}T00:00:00`);
     if (view === "week") return expenseDate >= sevenDaysAgo;
-    return expenseDate.getMonth() === currentMonth && expenseDate.getFullYear() === currentYear;
+    return isDateInCurrentMonth(expense.date ?? getTodayDateString());
   }), [currentMonth, currentYear, expenses, sevenDaysAgo, view]);
 
   const total = visibleExpenses.reduce((sum, exp) => sum + exp.amount, 0);
@@ -3269,9 +3365,9 @@ function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, c
               <div className="mt-2 text-base text-zinc-700">Tasks still pending</div>
             </div>
             <div className="homepage-inner-card rounded-[1.5rem] bg-zinc-50 p-5">
-              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-600">Today</div>
-              <div className="mt-3 text-3xl font-semibold text-zinc-950">{formatCurrency(overview.todayExpense)}</div>
-              <div className="mt-2 text-base text-zinc-700">Spent today</div>
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-600">This week</div>
+              <div className="mt-3 text-3xl font-semibold text-zinc-950">{formatCurrency(overview.weeklyExpense)}</div>
+              <div className="mt-2 text-base text-zinc-700">Spent this week</div>
             </div>
           </div>
         </div>
