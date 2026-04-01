@@ -29,6 +29,10 @@ const WORKOUT_PLANS_STORAGE_KEY = "stability-dashboard-workout-plans-v1";
 const WORKOUT_FOLDERS_STORAGE_KEY = "stability-dashboard-workout-folders-v1";
 const DASHBOARD_STATE_TABLE = "user_dashboard_state";
 const SAVE_DEBOUNCE_MS = 800;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EPOCH_START = new Date(1970, 0, 1);
+const REDUCE_WEEK_DAYS = 7;
+const REDUCE_MONTH_DAYS = 28;
 
 function getTodayDateString() {
   const now = new Date();
@@ -134,6 +138,38 @@ function getDateLabelFromMonthKey(monthKey, index) {
   const date = new Date(year, monthIndex, 1);
   date.setDate(index + 1);
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function getDateFromMonthKeyIndex(monthKey, index) {
+  const { year, monthIndex } = parseMonthKey(monthKey);
+  return new Date(year, monthIndex, index + 1);
+}
+
+function formatDateLabel(date) {
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function getDayNumber(date) {
+  const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.floor((normalized.getTime() - EPOCH_START.getTime()) / DAY_MS);
+}
+
+function getReducePeriodLength(period) {
+  if (period === "week") return REDUCE_WEEK_DAYS;
+  if (period === "month") return REDUCE_MONTH_DAYS;
+  return 1;
+}
+
+function getReducePeriodId(date, period) {
+  return Math.floor(getDayNumber(date) / getReducePeriodLength(period));
+}
+
+function getReducePeriodRange(periodId, period) {
+  const start = new Date(EPOCH_START);
+  start.setDate(start.getDate() + periodId * getReducePeriodLength(period));
+  const end = new Date(start);
+  end.setDate(end.getDate() + getReducePeriodLength(period) - 1);
+  return { start, end };
 }
 
 function getCurrentMonthLabel() {
@@ -463,9 +499,11 @@ function buildConsecutiveChart(points, axisMode = "days") {
       value: streak,
       success,
       dateLabel:
-        axisMode === "days"
-          ? getDateLabelFromIndex(calendarIndex)
-          : `${axisMode === "weeks" ? "Week" : "Month"} ${idx + 1}`,
+        typeof point === "object" && point.dateLabel
+          ? point.dateLabel
+          : axisMode === "days"
+            ? getDateLabelFromIndex(calendarIndex)
+            : `${axisMode === "weeks" ? "Week" : "Month"} ${idx + 1}`,
     };
   });
 }
@@ -484,6 +522,50 @@ function getVisibleMonthLogEntries(habit, monthKey = getMonthKey()) {
     .slice(startIndex, visibleCount)
     .map((value, offset) => ({ index: startIndex + offset, value }))
     .filter((entry) => entry.value !== null && entry.value !== undefined);
+}
+
+function getHabitValueForDate(habit, date) {
+  if (!date) return 0;
+  if (habit.startDate) {
+    const startDate = new Date(`${habit.startDate}T00:00:00`);
+    if (date < startDate) return 0;
+  }
+
+  const monthKey = getMonthKey(date);
+  const monthLogs = getHabitHistory(habit)[monthKey] ?? [];
+  const value = monthLogs[date.getDate() - 1];
+  if (value === null || value === undefined) return 0;
+  return habit.type === "build" ? getBuildValue(value) : Math.max(0, Number(value) || 0);
+}
+
+function getVisibleReducePeriodEntries(habit, monthKey = getMonthKey()) {
+  const period = habit.target.period;
+  const visibleLogEntries = getVisibleMonthLogEntries(habit, monthKey);
+  if (period === "day") return visibleLogEntries;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const periodIds = [...new Set(visibleLogEntries.map((entry) => getReducePeriodId(getDateFromMonthKeyIndex(monthKey, entry.index), period)))];
+
+  return periodIds.map((periodId, visibleIndex) => {
+    const { start, end } = getReducePeriodRange(periodId, period);
+    const total = Array.from({ length: getReducePeriodLength(period) }, (_, index) => {
+      const date = new Date(start);
+      date.setDate(start.getDate() + index);
+      return getHabitValueForDate(habit, date);
+    }).reduce((sum, value) => sum + value, 0);
+
+    return {
+      index: visibleIndex,
+      periodId,
+      total,
+      start,
+      end,
+      isCurrentPeriod: start <= today && end >= today,
+      finalized: end < today,
+      dateLabel: `${formatDateLabel(start)} - ${formatDateLabel(end)}`,
+    };
+  });
 }
 
 function getBuildValue(value) {
@@ -606,14 +688,23 @@ function getBuildMetrics(habit) {
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
   const visibleLogEntries = getVisibleMonthLogEntries(habit);
-  const visibleLogs = visibleLogEntries.map((entry) => entry.value);
-  const grouped = chunkByPeriod(visibleLogs, period);
-  const currentPeriodIndex = Math.max(0, grouped.length - 1);
-  const periodStates = grouped.map((chunk, index) => {
-    const total = chunk.reduce((sum, value) => sum + value, 0);
-    const state = getReducePeriodState(total, frequency, index === currentPeriodIndex);
-    return { ...state, index };
-  });
+  const reducePeriods = getVisibleReducePeriodEntries(habit);
+  const currentPeriodIndex = Math.max(0, reducePeriods.findIndex((entry) => entry.isCurrentPeriod));
+  const periodStates =
+    period === "day"
+      ? visibleLogEntries.map((entry) => ({
+          ...getReducePeriodState(entry.value, frequency, entry.index === getTodayLogIndex(habit.logs.length)),
+          index: entry.index,
+          total: entry.value,
+          dateLabel: getDateLabelFromMonthKey(getMonthKey(), entry.index),
+        }))
+      : reducePeriods.map((entry) => ({
+          ...getReducePeriodState(entry.total, frequency, entry.isCurrentPeriod),
+          index: entry.index,
+          total: entry.total,
+          finalized: entry.finalized,
+          dateLabel: entry.dateLabel,
+        }));
   const finalizedStates = periodStates.filter((entry) => entry.finalized);
   const compliant = finalizedStates.map((entry) => entry.success);
   const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
@@ -621,22 +712,23 @@ function getReduceMetrics(habit) {
   const currentStreak = getCurrentStreak(compliant);
   const bestStreak = getBestStreak(compliant);
   const axisMode = period === "week" ? "weeks" : period === "month" ? "months" : "days";
-  const streakUnit = period === "week" ? "week" : period === "month" ? "month" : "day";
+  const streakUnit = period === "week" ? "7-day window" : period === "month" ? "28-day window" : "day";
   const chartSource = period === "day"
-    ? visibleLogEntries
-      .map((entry) => ({
-        index: entry.index,
-        ...getReducePeriodState(entry.value, frequency, entry.index === getTodayLogIndex(habit.logs.length)),
-      }))
-      .filter((entry) => entry.finalized)
-      .map((entry) => ({
-        index: entry.index,
-        success: entry.success,
-      }))
+    ? periodStates
+        .filter((entry) => entry.finalized)
+        .map((entry) => ({
+          index: entry.index,
+          success: entry.success,
+          dateLabel: entry.dateLabel,
+        }))
     : periodStates
-      .filter((entry) => entry.finalized)
-      .map((entry) => entry.success);
-  const currentPeriodState = periodStates[currentPeriodIndex] ?? { status: "pending" };
+        .filter((entry) => entry.finalized)
+        .map((entry) => ({
+          index: entry.index,
+          success: entry.success,
+          dateLabel: entry.dateLabel,
+        }));
+  const currentPeriodState = periodStates[currentPeriodIndex] ?? { status: "pending", total: 0 };
 
   return {
     currentStreak,
@@ -650,9 +742,9 @@ function getReduceMetrics(habit) {
     totalSuccessful,
     todayStatus: currentPeriodState.status,
     chartXAxisMode: axisMode,
-    chartSummaryLabel: `${totalSuccessful} successful ${period === "week" ? "weeks" : period === "month" ? "months" : "days"} this month`,
-    periodSuccesses: grouped[grouped.length - 1]?.reduce((sum, value) => sum + value, 0) ?? 0,
-    periodSummaryLabel: period === "week" ? "Uses this week" : period === "month" ? "Uses this month" : "Uses today",
+    chartSummaryLabel: `${totalSuccessful} successful ${period === "week" ? "7-day windows" : period === "month" ? "28-day windows" : "days"} in this view`,
+    periodSuccesses: currentPeriodState.total ?? 0,
+    periodSummaryLabel: period === "week" ? "Uses this 7-day window" : period === "month" ? "Uses this 28-day window" : "Uses today",
   };
 }
 
@@ -706,67 +798,62 @@ function getHabitCubeData(habit, monthKey = getMonthKey()) {
   }
 
   if (period === "week") {
-    return visibleLogs.map((value, index) => {
-      const chunkStart = Math.floor(index / 7) * 7;
-      const chunk = visibleLogs.slice(chunkStart, chunkStart + 7);
-      const partialChunk = visibleLogs.slice(chunkStart, index + 1);
-      const weeklyTotal = chunk.reduce((sum, item) => sum + item, 0);
-      const runningTotal = partialChunk.reduce((sum, item) => sum + item, 0);
-      const isCurrentWeek = Math.floor(index / 7) === Math.floor(todayIndex / 7) && monthKey === getMonthKey();
-      const state = getReducePeriodState(weeklyTotal > frequency ? weeklyTotal : runningTotal, frequency, isCurrentWeek && weeklyTotal <= frequency);
+    return visibleLogs.map((_, index) => {
+      const date = getDateFromMonthKeyIndex(monthKey, index);
+      const periodId = getReducePeriodId(date, period);
+      const { start, end } = getReducePeriodRange(periodId, period);
+      const total = Array.from({ length: REDUCE_WEEK_DAYS }, (_, offset) => {
+        const day = new Date(start);
+        day.setDate(start.getDate() + offset);
+        return getHabitValueForDate(habit, day);
+      }).reduce((sum, value) => sum + value, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const state = getReducePeriodState(total, frequency, start <= today && end >= today);
       return {
         day: index + 1,
         beforeStart: index < startIndex,
         ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : state),
         dateLabel: getDateLabelFromMonthKey(monthKey, index),
-        statusLabel: index < startIndex ? "tracking not started" : `week total ${runningTotal} / ${frequency}`,
+        statusLabel: index < startIndex ? "tracking not started" : `${formatDateLabel(start)} - ${formatDateLabel(end)}: ${total} / ${frequency} uses`,
       };
     });
   }
 
-  const monthTotal = visibleLogs.reduce((sum, value) => sum + value, 0);
-  const monthState = getReducePeriodState(monthTotal, frequency, monthKey === getMonthKey() && monthTotal <= frequency);
-  return visibleLogs.map((_, index) => ({
-    day: index + 1,
-    beforeStart: index < startIndex,
-    ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : monthState),
-    dateLabel: getDateLabelFromMonthKey(monthKey, index),
-    statusLabel:
-      index < startIndex
-        ? "tracking not started"
-        : monthState.status === "pending"
-          ? "within monthly target so far"
-          : monthState.status === "success"
-            ? "within monthly target"
-            : "over monthly target",
-  }));
+  return visibleLogs.map((_, index) => {
+    const date = getDateFromMonthKeyIndex(monthKey, index);
+    const periodId = getReducePeriodId(date, period);
+    const { start, end } = getReducePeriodRange(periodId, period);
+    const total = Array.from({ length: REDUCE_MONTH_DAYS }, (_, offset) => {
+      const day = new Date(start);
+      day.setDate(start.getDate() + offset);
+      return getHabitValueForDate(habit, day);
+    }).reduce((sum, value) => sum + value, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const state = getReducePeriodState(total, frequency, start <= today && end >= today);
+    return {
+      day: index + 1,
+      beforeStart: index < startIndex,
+      ...(index < startIndex ? { status: "not-started", fill: 0, success: false, level: 0 } : state),
+      dateLabel: getDateLabelFromMonthKey(monthKey, index),
+      statusLabel: index < startIndex ? "tracking not started" : `${formatDateLabel(start)} - ${formatDateLabel(end)}: ${total} / ${frequency} uses`,
+    };
+  });
 }
 
 function getHabitWeekData(habit, monthKey = getMonthKey()) {
-  const history = getHabitHistory(habit);
-  const monthLogs = history[monthKey] ?? [];
-  const { visibleCount } = getCurrentMonthVisibility(monthKey, monthLogs.length);
-  const visibleLogs = monthLogs.slice(0, visibleCount);
-  const weeklyChunks = [];
-
-  for (let start = 0; start < visibleLogs.length; start += 7) {
-    const chunk = visibleLogs.slice(start, start + 7);
-    const total = chunk.reduce((sum, value) => sum + value, 0);
-    const end = Math.min(start + chunk.length - 1, monthLogs.length - 1);
-    const isCurrentWeek = monthKey === getMonthKey() && end >= getTodayLogIndex(monthLogs.length);
-    const state = getReducePeriodState(total, habit.target.frequency, isCurrentWeek);
-
-    weeklyChunks.push({
-      week: Math.floor(start / 7) + 1,
-      total,
+  return getVisibleReducePeriodEntries(habit, monthKey).map((entry, index) => {
+    const state = getReducePeriodState(entry.total, habit.target.frequency, entry.isCurrentPeriod);
+    return {
+      week: index + 1,
+      total: entry.total,
       success: state.success,
       status: state.status,
-      startLabel: getDateLabelFromMonthKey(monthKey, start),
-      endLabel: getDateLabelFromMonthKey(monthKey, end),
-    });
-  }
-
-  return weeklyChunks;
+      startLabel: formatDateLabel(entry.start),
+      endLabel: formatDateLabel(entry.end),
+    };
+  });
 }
 
 function getLinePoints(data, width, height, padX = 18, padY = 16) {
@@ -847,7 +934,7 @@ function LineChart({ data, xLabelMode = "days", color = "#10b981", compact = fal
             style={{ left: `${(hovered.x / width) * 100}%`, top: `${(hovered.y / height) * 100 - 18}%`, transform: "translate(-50%, -100%)" }}
           >
             <div className="font-semibold">{hovered.dateLabel}</div>
-            <div>{hovered.value} consecutive successful {xLabelMode === "days" ? "days" : xLabelMode === "weeks" ? "weeks" : "months"}</div>
+            <div>{hovered.value} consecutive successful {xLabelMode === "days" ? "days" : xLabelMode === "weeks" ? "7-day windows" : "28-day windows"}</div>
           </div>
         ) : null}
       </div>
@@ -860,7 +947,7 @@ function LineChart({ data, xLabelMode = "days", color = "#10b981", compact = fal
             ))}
           </div>
           <div className="ml-9 text-center text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-            {xLabelMode === "days" ? "Day of month" : xLabelMode === "weeks" ? "Week" : "Month"}
+            {xLabelMode === "days" ? "Day of month" : xLabelMode === "weeks" ? "7-day window" : "28-day window"}
           </div>
         </>
       ) : null}
@@ -935,7 +1022,7 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
             ))}
           </div>
           <div className="flex items-center justify-between text-xs text-zinc-500">
-            <span>{weeklyTiles.length} weekly checks</span>
+            <span>{weeklyTiles.length} rolling 7-day checks</span>
             <span>{weeklyTiles.filter((tile) => tile.success).length} within target</span>
           </div>
         </>
@@ -1374,7 +1461,7 @@ function HabitLogModal({ habit, onClose, onSave }) {
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-800"><X /></button>
         </div>
         <label className="mb-6 block">
-          <span className="text-sm font-medium text-emerald-900/70">{isBuild ? `How many completions today? Target: ${habit.target.frequency}` : `How many times this ${habit.target.period}?`}</span>
+          <span className="text-sm font-medium text-emerald-900/70">{isBuild ? `How many completions today? Target: ${habit.target.frequency}` : "How many times today?"}</span>
           <input type="number" min="0" className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-2xl outline-none focus:ring-2 focus:ring-emerald-300" value={count} onChange={(e) => setCount(Math.max(0, Number(e.target.value)))} />
         </label>
         <div className="mb-8 grid grid-cols-5 gap-2">
