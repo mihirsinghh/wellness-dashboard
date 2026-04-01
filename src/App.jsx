@@ -524,6 +524,23 @@ function getVisibleMonthLogEntries(habit, monthKey = getMonthKey()) {
     .filter((entry) => entry.value !== null && entry.value !== undefined);
 }
 
+function getAllHabitDayEntries(habit) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return Object.keys(getHabitHistory(habit))
+    .sort()
+    .flatMap((monthKey) => getVisibleMonthLogEntries(habit, monthKey).map((entry) => {
+      const date = getDateFromMonthKeyIndex(monthKey, entry.index);
+      return {
+        ...entry,
+        monthKey,
+        date,
+      };
+    }))
+    .filter((entry) => entry.date <= today);
+}
+
 function getHabitValueForDate(habit, date) {
   if (!date) return 0;
   if (habit.startDate) {
@@ -557,6 +574,47 @@ function getVisibleReducePeriodEntries(habit, monthKey = getMonthKey()) {
 
     return {
       index: visibleIndex,
+      periodId,
+      total,
+      start,
+      end,
+      isCurrentPeriod: start <= today && end >= today,
+      finalized: end < today,
+      dateLabel: `${formatDateLabel(start)} - ${formatDateLabel(end)}`,
+    };
+  });
+}
+
+function getAllReducePeriodEntries(habit) {
+  const period = habit.target.period;
+  if (period === "day") {
+    const todayIndex = getTodayLogIndex(habit.logs.length);
+    return getAllHabitDayEntries(habit).map((entry, index) => ({
+      index,
+      total: entry.value,
+      start: entry.date,
+      end: entry.date,
+      isCurrentPeriod: entry.monthKey === getMonthKey() && entry.index === todayIndex,
+      finalized: !(entry.monthKey === getMonthKey() && entry.index === todayIndex),
+      dateLabel: formatDateLabel(entry.date),
+    }));
+  }
+
+  const allEntries = getAllHabitDayEntries(habit);
+  const periodIds = [...new Set(allEntries.map((entry) => getReducePeriodId(entry.date, period)))];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return periodIds.map((periodId, index) => {
+    const { start, end } = getReducePeriodRange(periodId, period);
+    const total = Array.from({ length: getReducePeriodLength(period) }, (_, offset) => {
+      const date = new Date(start);
+      date.setDate(start.getDate() + offset);
+      return getHabitValueForDate(habit, date);
+    }).reduce((sum, value) => sum + value, 0);
+
+    return {
+      index,
       periodId,
       total,
       start,
@@ -658,7 +716,12 @@ function getBuildMetrics(habit) {
     index: entry.index,
     ...getBuildDayState(habit, entry.value, entry.index),
   }));
-  const finalizedStates = dayStates.filter((entry) => entry.finalized);
+  const allDayStates = getAllHabitDayEntries(habit).map((entry) => ({
+    index: entry.index,
+    monthKey: entry.monthKey,
+    ...getBuildDayState(habit, entry.value, entry.index, entry.monthKey),
+  }));
+  const finalizedStates = allDayStates.filter((entry) => entry.finalized);
   const successes = finalizedStates.map((entry) => entry.success);
   const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
   const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
@@ -688,8 +751,8 @@ function getBuildMetrics(habit) {
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
   const visibleLogEntries = getVisibleMonthLogEntries(habit);
-  const reducePeriods = getVisibleReducePeriodEntries(habit);
-  const currentPeriodIndex = Math.max(0, reducePeriods.findIndex((entry) => entry.isCurrentPeriod));
+  const allReducePeriods = getAllReducePeriodEntries(habit);
+  const currentPeriodIndex = Math.max(0, allReducePeriods.findIndex((entry) => entry.isCurrentPeriod));
   const periodStates =
     period === "day"
       ? visibleLogEntries.map((entry) => ({
@@ -698,19 +761,25 @@ function getReduceMetrics(habit) {
           total: entry.value,
           dateLabel: getDateLabelFromMonthKey(getMonthKey(), entry.index),
         }))
-      : reducePeriods.map((entry) => ({
-          ...getReducePeriodState(entry.total, frequency, entry.isCurrentPeriod),
+      : allReducePeriods.map((entry) => ({
+          ...getReducePeriodState(entry.total, frequency, false),
           index: entry.index,
           total: entry.total,
           finalized: entry.finalized,
+          isCurrentPeriod: entry.isCurrentPeriod,
+          success: entry.total <= frequency,
+          status: entry.total > frequency ? "failed" : "success",
           dateLabel: entry.dateLabel,
         }));
   const finalizedStates = periodStates.filter((entry) => entry.finalized);
+  const streakStates = period === "day"
+    ? periodStates.map((entry) => entry.success)
+    : periodStates.map((entry) => entry.success);
   const compliant = finalizedStates.map((entry) => entry.success);
   const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
   const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
-  const currentStreak = getCurrentStreak(compliant);
-  const bestStreak = getBestStreak(compliant);
+  const currentStreak = getCurrentStreak(streakStates);
+  const bestStreak = getBestStreak(streakStates);
   const axisMode = period === "week" ? "weeks" : period === "month" ? "months" : "days";
   const streakUnit = period === "week" ? "7-day window" : period === "month" ? "28-day window" : "day";
   const chartSource = period === "day"
@@ -722,13 +791,19 @@ function getReduceMetrics(habit) {
           dateLabel: entry.dateLabel,
         }))
     : periodStates
-        .filter((entry) => entry.finalized)
-        .map((entry) => ({
-          index: entry.index,
+        .slice(-8)
+        .map((entry, idx) => ({
+          index: idx,
           success: entry.success,
           dateLabel: entry.dateLabel,
         }));
   const currentPeriodState = periodStates[currentPeriodIndex] ?? { status: "pending", total: 0 };
+  const recentPeriods = period === "day"
+    ? []
+    : periodStates.slice(-8).map((entry, idx) => ({
+        ...entry,
+        index: idx,
+      }));
 
   return {
     currentStreak,
@@ -745,6 +820,7 @@ function getReduceMetrics(habit) {
     chartSummaryLabel: `${totalSuccessful} successful ${period === "week" ? "7-day windows" : period === "month" ? "28-day windows" : "days"} in this view`,
     periodSuccesses: currentPeriodState.total ?? 0,
     periodSummaryLabel: period === "week" ? "Uses this 7-day window" : period === "month" ? "Uses this 28-day window" : "Uses today",
+    recentPeriods,
   };
 }
 
@@ -1055,6 +1131,41 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
   );
 }
 
+function HabitPeriodGrid({ habit, periods = [], compact = false }) {
+  const periodLabel = habit.target.period === "week" ? "7-day window" : "28-day window";
+  const columnsClass = compact ? "grid-cols-4" : "md:grid-cols-4";
+
+  if (!periods.length) {
+    return <div className="rounded-[1.25rem] border border-dashed border-zinc-300 bg-white/70 p-4 text-sm text-zinc-600">No completed windows yet.</div>;
+  }
+
+  return (
+    <div className={`grid gap-3 ${columnsClass}`}>
+      {periods.map((period, index) => (
+        <div
+          key={`${habit.id}-${period.dateLabel}-${index}`}
+          className={`rounded-[1.1rem] border p-3 ${
+            period.status === "failed"
+              ? "border-rose-300 bg-rose-50"
+              : period.isCurrentPeriod
+                ? "border-emerald-400 bg-emerald-100"
+                : "border-emerald-200 bg-emerald-50"
+          }`}
+          title={`${period.dateLabel}: ${period.total} / ${habit.target.frequency}`}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{periodLabel} {index + 1}</div>
+          <div className="mt-1 text-sm font-medium text-zinc-800">{period.dateLabel}</div>
+          <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-semibold ${
+            period.status === "failed" ? "bg-rose-500 text-white" : "bg-emerald-500 text-black"
+          }`}>
+            {period.total} / {habit.target.frequency}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function HabitYearGrid({ habit }) {
   const years = getHabitYears(habit);
   const [selectedYear, setSelectedYear] = useState(years[0] ?? new Date().getFullYear());
@@ -1170,14 +1281,16 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
       </div>
 
       <div className="rounded-[1.75rem] bg-zinc-50/90 p-4 ring-1 ring-zinc-100">
-        <HabitCubeGrid habit={habit} headerMode="compact" />
+        {habit.type === "reduce" && habit.target.period !== "day"
+          ? <HabitPeriodGrid habit={habit} periods={metrics.recentPeriods} compact />
+          : <HabitCubeGrid habit={habit} headerMode="compact" />}
       </div>
 
       <div className="mt-5 flex items-center justify-between gap-3">
         <div>
           <div className="text-base font-semibold text-zinc-950">{percentLabel} success rate</div>
           <div className="text-sm text-zinc-600">
-            {habit.type === "reduce" && habit.target.period === "week" ? "Measured by week, not individual days" : metrics.summaryValue}
+            {habit.type === "reduce" && habit.target.period !== "day" ? `Rolling ${habit.target.period === "week" ? "7-day" : "28-day"} windows` : metrics.summaryValue}
           </div>
         </div>
         {isBuild && habit.target.frequency <= 1 ? (
@@ -1230,9 +1343,10 @@ function SectionHeader({ title, color, onBack }) {
 
 function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onEdit, onDelete }) {
   const colors = palette[habit.color];
-  const suffix = metrics.chartXAxisMode === "weeks" ? "weeks" : metrics.chartXAxisMode === "months" ? "months" : "days";
+  const suffix = metrics.chartXAxisMode === "weeks" ? "7-day windows" : metrics.chartXAxisMode === "months" ? "28-day windows" : "days";
   const isBuild = habit.type === "build";
   const benefitSummary = getHabitBenefitSummary(habit, metrics.totalSuccessful);
+  const usesRollingWindows = habit.type === "reduce" && habit.target.period !== "day";
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.12),transparent_25%),linear-gradient(135deg,#f6f8f3_0%,#eef4ef_45%,#f8efe3_100%)] px-6 py-8 md:px-10 lg:px-14">
@@ -1282,23 +1396,35 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
           {benefitSummary ? <StatCard label={benefitSummary.verb} value={formatBenefitAmount(benefitSummary.total, benefitSummary.unit)} /> : <StatCard label={metrics.periodSummaryLabel} value={metrics.periodSuccesses} />}
         </div>
 
-        <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <h3 className="text-3xl font-bold text-emerald-950">Monthly cubes</h3>
-            <div className="text-lg text-emerald-900/60">Daily success up through today</div>
+        {usesRollingWindows ? (
+          <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+              <h3 className="text-3xl font-bold text-emerald-950">Rolling windows</h3>
+              <div className="text-lg text-emerald-900/60">Recent {habit.target.period === "week" ? "7-day" : "28-day"} checks across month boundaries</div>
+            </div>
+            <HabitPeriodGrid habit={habit} periods={metrics.recentPeriods} />
           </div>
-          <div className="max-w-[18rem]">
-            <HabitCubeGrid habit={habit} compact headerMode="compact" />
-          </div>
-        </div>
+        ) : (
+          <>
+            <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                <h3 className="text-3xl font-bold text-emerald-950">Monthly cubes</h3>
+                <div className="text-lg text-emerald-900/60">Daily success up through today</div>
+              </div>
+              <div className="max-w-[18rem]">
+                <HabitCubeGrid habit={habit} compact headerMode="compact" />
+              </div>
+            </div>
 
-        <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <h3 className="text-3xl font-bold text-emerald-950">Yearly view</h3>
-            <div className="text-lg text-emerald-900/60">Monthly tile distributions across saved years</div>
-          </div>
-          <HabitYearGrid habit={habit} />
-        </div>
+            <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                <h3 className="text-3xl font-bold text-emerald-950">Yearly view</h3>
+                <div className="text-lg text-emerald-900/60">Monthly tile distributions across saved years</div>
+              </div>
+              <HabitYearGrid habit={habit} />
+            </div>
+          </>
+        )}
 
         <div className="space-y-6 rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -3089,12 +3215,12 @@ function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, c
                         <div className="text-2xl">{habit.emoji}</div>
                         <div>
                           <div className="max-w-[12rem] whitespace-nowrap font-semibold text-emerald-950" style={getHabitTitleStyle(habit.name)}>{habit.name}</div>
-                          <div className="text-emerald-900/55">{formatStreakLabel(metrics.currentStreak, metrics.chartXAxisMode === "weeks" ? "week" : metrics.chartXAxisMode === "months" ? "month" : "day")}</div>
+                          <div className="text-emerald-900/55">{formatStreakLabel(metrics.currentStreak, metrics.chartXAxisMode === "weeks" ? "7-day window" : metrics.chartXAxisMode === "months" ? "28-day window" : "day")}</div>
                         </div>
                       </div>
                       <div className="text-2xl font-bold text-emerald-950">{metrics.consistency30}%</div>
                     </div>
-                    <div className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">{getCurrentMonthLabel()}</div>
+                    <div className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">{habit.type === "reduce" && habit.target.period !== "day" ? "Rolling windows" : getCurrentMonthLabel()}</div>
                     <LineChart data={metrics.chartData} xLabelMode={metrics.chartXAxisMode} color={palette[habit.color].stroke} />
                   </div>
                 );
