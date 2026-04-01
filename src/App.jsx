@@ -632,6 +632,33 @@ function getAllReducePeriodEntries(habit) {
   });
 }
 
+function getReduceUsageDates(habit) {
+  return getAllHabitDayEntries(habit).flatMap((entry) => {
+    const count = Math.max(0, Number(entry.value) || 0);
+    return Array.from({ length: count }, () => entry.date);
+  });
+}
+
+function getNextAllowedReduceDate(habit) {
+  const period = habit.target.period;
+  if (period === "day") return new Date();
+
+  const limit = Math.max(0, Number(habit.target.frequency) || 0);
+  if (limit <= 0) return null;
+
+  const periodLength = getReducePeriodLength(period);
+  const usageDates = getReduceUsageDates(habit).sort((a, b) => a - b);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const windowStart = addDays(today, -(periodLength - 1));
+  const currentWindowUses = usageDates.filter((date) => date >= windowStart && date <= today);
+
+  if (currentWindowUses.length < limit) return today;
+
+  const releaseIndex = currentWindowUses.length - limit;
+  return addDays(currentWindowUses[releaseIndex], periodLength);
+}
+
 function getBuildValue(value) {
   if (typeof value === "boolean") return value ? 1 : 0;
   return Number(value) || 0;
@@ -756,18 +783,19 @@ function getBuildMetrics(habit) {
 
 function getReduceMetrics(habit) {
   const { frequency, period, label } = habit.target;
-  const visibleLogEntries = getVisibleMonthLogEntries(habit);
   const allReducePeriods = getAllReducePeriodEntries(habit);
   const currentPeriodIndex = Math.max(0, allReducePeriods.findIndex((entry) => entry.isCurrentPeriod));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const periodStates =
     period === "day"
-      ? visibleLogEntries.map((entry) => ({
-          ...getReducePeriodState(entry.value, frequency, entry.index === getTodayLogIndex(habit.logs.length)),
+      ? allReducePeriods.map((entry) => ({
+          ...getReducePeriodState(entry.total, frequency, entry.isCurrentPeriod),
           index: entry.index,
-          total: entry.value,
-          dateLabel: getDateLabelFromMonthKey(getMonthKey(), entry.index),
+          total: entry.total,
+          dateLabel: entry.dateLabel,
+          finalized: entry.finalized,
+          isCurrentPeriod: entry.isCurrentPeriod,
         }))
       : allReducePeriods.map((entry) => ({
           index: entry.index,
@@ -782,7 +810,7 @@ function getReduceMetrics(habit) {
         }));
   const successStates = periodStates.filter((entry) => entry.success);
   const finalizedStates = period === "day" ? periodStates.filter((entry) => entry.finalized) : periodStates;
-  const streakStates = periodStates.map((entry) => entry.success);
+  const streakStates = period === "day" ? finalizedStates.map((entry) => entry.success) : periodStates.map((entry) => entry.success);
   const compliant = finalizedStates.map((entry) => entry.success);
   const totalSuccessful = successStates.length;
   const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
@@ -812,10 +840,7 @@ function getReduceMetrics(habit) {
         ...entry,
         index: idx,
       }));
-  const nextAllowedDate =
-    period !== "day" && currentPeriodState.total >= frequency && currentPeriodState.end
-      ? addDays(currentPeriodState.end, 1)
-      : today;
+  const nextAllowedDate = getNextAllowedReduceDate(habit) ?? today;
   const nextAllowedLabel = formatDateLabel(nextAllowedDate);
   const nextAllowedDescription =
     period === "day"
