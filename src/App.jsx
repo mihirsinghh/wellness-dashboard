@@ -413,7 +413,8 @@ function getHabitBenefitSummary(habit, successCount = 0) {
     unit: habit.benefit.unit.trim(),
     verb,
     perSuccessLabel: `${formatBenefitAmount(amount, habit.benefit.unit)} ${verb} per successful ${habit.target.period}`,
-    totalLabel: `${formatBenefitAmount(total, habit.benefit.unit)} ${verb} this month`,
+    totalLabel: `Total ${verb}`,
+    totalValueLabel: formatBenefitAmount(total, habit.benefit.unit),
   };
 }
 function getDefaultDashboardState() {
@@ -1477,6 +1478,11 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
           <div className="text-sm text-zinc-600">
             {habit.type === "reduce" && habit.target.period !== "day" ? `Next allowed: ${metrics.nextAllowedLabel}` : metrics.summaryValue}
           </div>
+          {benefitSummary ? (
+            <div className="mt-2 text-sm font-medium text-zinc-700">
+              {benefitSummary.totalLabel}: <span className="font-semibold text-zinc-950">{benefitSummary.totalValueLabel}</span>
+            </div>
+          ) : null}
         </div>
         {isBuild && habit.target.frequency <= 1 ? (
           <button
@@ -1500,12 +1506,6 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
           </button>
         )}
       </div>
-      {benefitSummary ? (
-        <div className="pointer-events-none absolute inset-x-4 bottom-4 hidden rounded-[1.3rem] border border-cyan-300/20 bg-zinc-950/95 px-4 py-3 text-sm text-white shadow-2xl group-hover:block">
-          <div className="font-semibold">{benefitSummary.perSuccessLabel}</div>
-          <div className="mt-1 text-white/70">{benefitSummary.totalLabel}</div>
-        </div>
-      ) : null}
     </button>
   );
 }
@@ -3168,7 +3168,10 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
   const buildHabits = useMemo(() => habits.filter((h) => h.type === "build"), [habits]);
   const reduceHabits = useMemo(() => habits.filter((h) => h.type === "reduce"), [habits]);
   const todaysGoals = useMemo(() => habits.filter((h) => getHabitMetrics(h).completedToday).length, [habits]);
-  const pendingHabits = useMemo(() => habits.filter((h) => !getHabitMetrics(h).completedToday), [habits]);
+  const pendingHabits = useMemo(
+    () => habits.filter((h) => h.target?.period === "day" && !getHabitMetrics(h).completedToday),
+    [habits],
+  );
   const handleReset = () => {
     setSelectedHabit(null);
     setAddingHabit(false);
