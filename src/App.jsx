@@ -3235,7 +3235,6 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
 
 function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, calendarUrl }) {
   const completedTasks = tasks.filter((task) => task.done).length;
-  const pendingTasks = tasks.filter((task) => !task.done);
   const expenseTotal = expenses.reduce((sum, exp) => sum + exp.amount, 0);
   const overview = getDashboardOverviewMetrics(habits, tasks, expenses);
 
@@ -3244,9 +3243,7 @@ function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, c
       <div className="mx-auto max-w-[1500px] space-y-10">
         <div>
           <div>
-            <div className="text-5xl">🍃</div>
-            <h1 className="mt-2 text-5xl font-bold tracking-tight text-emerald-950 md:text-6xl">Personal Wellness Dashboard</h1>
-            <p className="mt-3 max-w-3xl text-2xl text-emerald-900/60">A one-stop page for your habits, tasks, training, expenses, and reflection.</p>
+            <p className="max-w-3xl text-2xl text-emerald-900/60">A one-stop page for your habits, tasks, training, expenses, and reflection.</p>
           </div>
         </div>
 
@@ -3288,58 +3285,6 @@ function DashboardHome({ habits, tasks, expenses, workoutPlans, onOpenSection, c
           <ModuleCard icon={CalendarDays} title="Google Calendar" subtitle="Open Google Calendar in a new tab to check your schedule." rightText="Open gcal" accent="sky" onClick={() => window.open(calendarUrl, "_blank", "noopener,noreferrer")} />
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-3">
-          <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5 xl:col-span-2">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-              <h2 className="text-3xl font-bold text-emerald-950">Habit snapshot</h2>
-              <button onClick={() => onOpenSection("habits")} className="rounded-full bg-emerald-500 px-5 py-2 font-semibold text-white hover:bg-emerald-600">Open habits</button>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {habits.slice(0, 4).map((habit) => {
-                const metrics = getHabitMetrics(habit);
-                return (
-                  <div key={habit.id} className="homepage-inner-card rounded-[1.5rem] border border-zinc-200 bg-zinc-50 p-5">
-                    <div className="mb-3 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="text-2xl">{habit.emoji}</div>
-                        <div>
-                          <div className="max-w-[12rem] whitespace-nowrap font-semibold text-emerald-950" style={getHabitTitleStyle(habit.name)}>{habit.name}</div>
-                          <div className="text-emerald-900/55">{formatStreakLabel(metrics.currentStreak, metrics.chartXAxisMode === "weeks" ? "7-day window" : metrics.chartXAxisMode === "months" ? "28-day window" : "day")}</div>
-                        </div>
-                      </div>
-                      <div className="text-2xl font-bold text-emerald-950">{metrics.consistency30}%</div>
-                    </div>
-                    <div className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-zinc-500">{habit.type === "reduce" && habit.target.period !== "day" ? "Rolling windows" : getCurrentMonthLabel()}</div>
-                    <LineChart data={metrics.chartData} xLabelMode={metrics.chartXAxisMode} color={palette[habit.color].stroke} />
-                  </div>
-                );
-              })}
-            </div>
-            {habits.length === 0 ? <div className="mt-4 rounded-[1.5rem] border border-dashed border-zinc-300 bg-white/90 p-6 text-lg text-zinc-600">No habits added yet. Create your first habit to populate your dashboard snapshot.</div> : null}
-          </div>
-
-          <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <h2 className="text-3xl font-bold text-emerald-950">Tasks quick view</h2>
-              <button onClick={() => onOpenSection("tasks")} className="rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-600">
-                Open tasks
-              </button>
-            </div>
-            <div className="space-y-3">
-              {pendingTasks.map((task) => (
-                <div key={task.id} className="homepage-inner-card flex items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-                  <div className="h-4 w-4 rounded-full bg-zinc-300" />
-                  <div className="text-lg text-zinc-950">{task.text}</div>
-                </div>
-              ))}
-              {pendingTasks.length === 0 ? (
-                <div className="homepage-inner-card rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-lg text-zinc-600">
-                  No pending tasks right now.
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
