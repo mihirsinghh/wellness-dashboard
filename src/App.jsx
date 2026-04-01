@@ -149,6 +149,12 @@ function formatDateLabel(date) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function addDays(date, amount) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 function getDayNumber(date) {
   const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return Math.floor((normalized.getTime() - EPOCH_START.getTime()) / DAY_MS);
@@ -753,6 +759,8 @@ function getReduceMetrics(habit) {
   const visibleLogEntries = getVisibleMonthLogEntries(habit);
   const allReducePeriods = getAllReducePeriodEntries(habit);
   const currentPeriodIndex = Math.max(0, allReducePeriods.findIndex((entry) => entry.isCurrentPeriod));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const periodStates =
     period === "day"
       ? visibleLogEntries.map((entry) => ({
@@ -762,7 +770,6 @@ function getReduceMetrics(habit) {
           dateLabel: getDateLabelFromMonthKey(getMonthKey(), entry.index),
         }))
       : allReducePeriods.map((entry) => ({
-          ...getReducePeriodState(entry.total, frequency, false),
           index: entry.index,
           total: entry.total,
           finalized: entry.finalized,
@@ -770,13 +777,14 @@ function getReduceMetrics(habit) {
           success: entry.total <= frequency,
           status: entry.total > frequency ? "failed" : "success",
           dateLabel: entry.dateLabel,
+          start: entry.start,
+          end: entry.end,
         }));
-  const finalizedStates = periodStates.filter((entry) => entry.finalized);
-  const streakStates = period === "day"
-    ? periodStates.map((entry) => entry.success)
-    : periodStates.map((entry) => entry.success);
+  const successStates = periodStates.filter((entry) => entry.success);
+  const finalizedStates = period === "day" ? periodStates.filter((entry) => entry.finalized) : periodStates;
+  const streakStates = periodStates.map((entry) => entry.success);
   const compliant = finalizedStates.map((entry) => entry.success);
-  const totalSuccessful = finalizedStates.filter((entry) => entry.success).length;
+  const totalSuccessful = successStates.length;
   const recent7 = finalizedStates.slice(-7).filter((entry) => entry.success).length;
   const currentStreak = getCurrentStreak(streakStates);
   const bestStreak = getBestStreak(streakStates);
@@ -804,6 +812,17 @@ function getReduceMetrics(habit) {
         ...entry,
         index: idx,
       }));
+  const nextAllowedDate =
+    period !== "day" && currentPeriodState.total >= frequency && currentPeriodState.end
+      ? addDays(currentPeriodState.end, 1)
+      : today;
+  const nextAllowedLabel = formatDateLabel(nextAllowedDate);
+  const nextAllowedDescription =
+    period === "day"
+      ? "Allowed today if you're under your daily cap."
+      : nextAllowedDate.getTime() === today.getTime()
+        ? "You are still within your limit today."
+        : `Next allowed on ${nextAllowedLabel}.`;
 
   return {
     currentStreak,
@@ -821,6 +840,12 @@ function getReduceMetrics(habit) {
     periodSuccesses: currentPeriodState.total ?? 0,
     periodSummaryLabel: period === "week" ? "Uses this 7-day window" : period === "month" ? "Uses this 28-day window" : "Uses today",
     recentPeriods,
+    successfulPeriodsCount: totalSuccessful,
+    nextAllowedDate,
+    nextAllowedLabel,
+    nextAllowedDescription,
+    nextAllowedToday: nextAllowedDate.getTime() === today.getTime(),
+    currentPeriodLabel: currentPeriodState.dateLabel ?? null,
   };
 }
 
@@ -1131,37 +1156,72 @@ function HabitCubeGrid({ habit, compact = false, monthKey = getMonthKey(), heade
   );
 }
 
-function HabitPeriodGrid({ habit, periods = [], compact = false }) {
-  const periodLabel = habit.target.period === "week" ? "7-day window" : "28-day window";
-  const columnsClass = compact ? "grid-cols-4" : "md:grid-cols-4";
+function HabitLimitTimeline({ habit, metrics, compact = false }) {
+  const periods = metrics.recentPeriods ?? [];
+  const periodLabel = habit.target.period === "week" ? "week" : "month";
 
   if (!periods.length) {
-    return <div className="rounded-[1.25rem] border border-dashed border-zinc-300 bg-white/70 p-4 text-sm text-zinc-600">No completed windows yet.</div>;
+    return <div className="rounded-[1.25rem] border border-dashed border-zinc-300 bg-white/70 p-4 text-sm text-zinc-600">No completed {periodLabel}s yet.</div>;
   }
 
   return (
-    <div className={`grid gap-3 ${columnsClass}`}>
-      {periods.map((period, index) => (
-        <div
-          key={`${habit.id}-${period.dateLabel}-${index}`}
-          className={`rounded-[1.1rem] border p-3 ${
-            period.status === "failed"
-              ? "border-rose-300 bg-rose-50"
-              : period.isCurrentPeriod
-                ? "border-emerald-400 bg-emerald-100"
-                : "border-emerald-200 bg-emerald-50"
-          }`}
-          title={`${period.dateLabel}: ${period.total} / ${habit.target.frequency}`}
-        >
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">{periodLabel} {index + 1}</div>
-          <div className="mt-1 text-sm font-medium text-zinc-800">{period.dateLabel}</div>
-          <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-semibold ${
-            period.status === "failed" ? "bg-rose-500 text-white" : "bg-emerald-500 text-black"
-          }`}>
-            {period.total} / {habit.target.frequency}
+    <div className="space-y-4">
+      <div className={`rounded-[1.25rem] border border-zinc-200 bg-white/80 ${compact ? "p-4" : "p-5"}`}>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Next allowed date</div>
+        <div className={`mt-2 font-bold text-zinc-950 ${compact ? "text-2xl" : "text-4xl"}`}>{metrics.nextAllowedLabel}</div>
+        <div className="mt-2 text-sm text-zinc-600">{metrics.nextAllowedDescription}</div>
+      </div>
+
+      <div className={`rounded-[1.25rem] border border-zinc-200 bg-white/80 ${compact ? "p-4" : "p-5"}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Successful {periodLabel}s</div>
+            <div className={`mt-2 font-bold text-zinc-950 ${compact ? "text-2xl" : "text-4xl"}`}>{metrics.successfulPeriodsCount}</div>
           </div>
+          <div className="text-right text-sm text-zinc-600">{metrics.currentPeriodLabel ?? ""}</div>
         </div>
-      ))}
+      </div>
+
+      <div className="space-y-3">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">Recent {periodLabel} markers</div>
+        <div className="flex flex-wrap gap-2">
+          {periods.map((period, index) => (
+            <div
+              key={`${habit.id}-${period.dateLabel}-${index}`}
+              title={`${period.dateLabel}: ${period.total} / ${habit.target.frequency}`}
+              className={`flex min-w-[92px] items-center justify-center rounded-full px-4 py-2 text-sm font-semibold ${
+                period.status === "failed"
+                  ? "bg-rose-500 text-white"
+                  : "bg-emerald-500 text-black"
+              }`}
+            >
+              {habit.target.period === "week" ? `W${index + 1}` : `M${index + 1}`}
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-3">
+          {periods.map((period, index) => (
+            <div
+              key={`${habit.id}-detail-${period.dateLabel}-${index}`}
+              className={`rounded-[1rem] border px-4 py-3 ${
+                period.status === "failed" ? "border-rose-300 bg-rose-50" : "border-emerald-200 bg-emerald-50"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">{periodLabel} {index + 1}</div>
+                  <div className="mt-1 text-sm text-zinc-700">{period.dateLabel}</div>
+                </div>
+                <div className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                  period.status === "failed" ? "bg-rose-500 text-white" : "bg-emerald-500 text-black"
+                }`}>
+                  {period.total} / {habit.target.frequency}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1282,7 +1342,7 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
 
       <div className="rounded-[1.75rem] bg-zinc-50/90 p-4 ring-1 ring-zinc-100">
         {habit.type === "reduce" && habit.target.period !== "day"
-          ? <HabitPeriodGrid habit={habit} periods={metrics.recentPeriods} compact />
+          ? <HabitLimitTimeline habit={habit} metrics={metrics} compact />
           : <HabitCubeGrid habit={habit} headerMode="compact" />}
       </div>
 
@@ -1290,7 +1350,7 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
         <div>
           <div className="text-base font-semibold text-zinc-950">{percentLabel} success rate</div>
           <div className="text-sm text-zinc-600">
-            {habit.type === "reduce" && habit.target.period !== "day" ? `Rolling ${habit.target.period === "week" ? "7-day" : "28-day"} windows` : metrics.summaryValue}
+            {habit.type === "reduce" && habit.target.period !== "day" ? `Next allowed: ${metrics.nextAllowedLabel}` : metrics.summaryValue}
           </div>
         </div>
         {isBuild && habit.target.frequency <= 1 ? (
@@ -1393,16 +1453,20 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
           <StatCard label="Current streak" value={metrics.currentStreak} suffix={suffix} />
           <StatCard label="Best streak" value={metrics.bestStreak} suffix={suffix} />
           <StatCard label="Success rate" value={metrics.consistency30} suffix="%" />
-          {benefitSummary ? <StatCard label={benefitSummary.verb} value={formatBenefitAmount(benefitSummary.total, benefitSummary.unit)} /> : <StatCard label={metrics.periodSummaryLabel} value={metrics.periodSuccesses} />}
+          {usesRollingWindows
+            ? <StatCard label="Next allowed" value={metrics.nextAllowedLabel} />
+            : benefitSummary
+              ? <StatCard label={benefitSummary.verb} value={formatBenefitAmount(benefitSummary.total, benefitSummary.unit)} />
+              : <StatCard label={metrics.periodSummaryLabel} value={metrics.periodSuccesses} />}
         </div>
 
         {usesRollingWindows ? (
           <div className="rounded-[2rem] bg-white/80 p-8 shadow-sm ring-1 ring-black/5">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-              <h3 className="text-3xl font-bold text-emerald-950">Rolling windows</h3>
-              <div className="text-lg text-emerald-900/60">Recent {habit.target.period === "week" ? "7-day" : "28-day"} checks across month boundaries</div>
+              <h3 className="text-3xl font-bold text-emerald-950">Limit status</h3>
+              <div className="text-lg text-emerald-900/60">Recent {habit.target.period === "week" ? "weeks" : "months"} and your next allowed date</div>
             </div>
-            <HabitPeriodGrid habit={habit} periods={metrics.recentPeriods} />
+            <HabitLimitTimeline habit={habit} metrics={metrics} />
           </div>
         ) : (
           <>
