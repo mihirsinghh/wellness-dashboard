@@ -292,9 +292,12 @@ function loadStoredValue(storageKey, fallbackValue, normalizeValue) {
 
 function getHabitHistory(habit) {
   const currentMonthKey = getMonthKey();
+  const hasExistingHistory = Boolean(habit.history && Object.keys(habit.history).length);
   return {
     ...(habit.history ?? {}),
-    [currentMonthKey]: habit.history?.[currentMonthKey] ?? habit.logs ?? [],
+    [currentMonthKey]:
+      habit.history?.[currentMonthKey]
+      ?? (hasExistingHistory ? createHabitLogsForMonth(habit.type ?? "build", habit.startDate ?? null, currentMonthKey) : habit.logs ?? []),
   };
 }
 
@@ -1503,27 +1506,17 @@ function HabitCard({ habit, metrics, onSelect, onQuickToggle, onOpenLogModal, on
             </div>
           ) : null}
         </div>
-        {isBuild && habit.target.frequency <= 1 ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onQuickToggle(habit.id);
-            }}
-            className={`rounded-full border px-5 py-2.5 text-base font-semibold shadow-sm transition ${metrics.completedToday ? `${colors.button} border-transparent text-white` : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50"}`}
-          >
-            {metrics.completedToday ? <span className="inline-flex items-center gap-2"><Check size={16} /> Done</span> : <span className="inline-flex items-center gap-2">Mark</span>}
-          </button>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenLogModal(habit);
-            }}
-            className="rounded-full border border-zinc-300 bg-white px-5 py-2.5 text-base font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
-          >
-            {isBuild ? "Log progress" : "Log count"}
-          </button>
-        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenLogModal(habit);
+          }}
+          className={`rounded-full border px-5 py-2.5 text-base font-semibold shadow-sm transition ${isBuild && metrics.completedToday ? `${colors.button} border-transparent text-white` : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50"}`}
+        >
+          {isBuild
+            ? metrics.completedToday ? <span className="inline-flex items-center gap-2"><Check size={16} /> Edit log</span> : <span className="inline-flex items-center gap-2">Log habit</span>
+            : "Log count"}
+        </button>
       </div>
     </button>
   );
@@ -1581,15 +1574,9 @@ function DetailView({ habit, metrics, onBack, onQuickToggle, onOpenLogModal, onE
               <button onClick={() => onDelete(habit.id)} className="rounded-full border border-red-200 bg-red-50 px-5 py-4 text-lg font-semibold text-red-600 shadow-sm transition hover:bg-red-100">
                 Delete
               </button>
-              {isBuild && habit.target.frequency <= 1 ? (
-                <button onClick={() => onQuickToggle(habit.id)} className={`rounded-full px-6 py-4 text-lg font-semibold shadow-sm transition ${metrics.completedToday ? `${colors.button} text-white` : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50"}`}>
-                  {metrics.completedToday ? "Logged for today" : "Log today"}
-                </button>
-              ) : (
-                <button onClick={() => onOpenLogModal(habit)} className="rounded-full border border-zinc-300 bg-white px-6 py-4 text-lg font-semibold text-zinc-800 shadow-sm transition hover:bg-zinc-50">
-                  {isBuild ? "Log progress" : "Log actual count"}
-                </button>
-              )}
+              <button onClick={() => onOpenLogModal(habit)} className={`rounded-full px-6 py-4 text-lg font-semibold shadow-sm transition ${isBuild && metrics.completedToday ? `${colors.button} text-white` : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50"}`}>
+                {isBuild ? (metrics.completedToday ? "Edit log" : "Log progress") : "Log actual count"}
+              </button>
             </div>
           </div>
         </div>
