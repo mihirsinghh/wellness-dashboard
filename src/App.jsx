@@ -586,6 +586,25 @@ function getHabitValueForDate(habit, date) {
   return habit.type === "build" ? getBuildValue(value) : Math.max(0, Number(value) || 0);
 }
 
+function setHabitValueForDate(habit, dateString, rawValue) {
+  const targetDate = new Date(`${dateString}T00:00:00`);
+  const monthKey = getMonthKey(targetDate);
+  const monthLogs = ensureHabitMonthLogs(habit, getHabitHistory(habit)[monthKey] ?? [], monthKey);
+  const nextLogs = [...monthLogs];
+  nextLogs[targetDate.getDate() - 1] = rawValue;
+
+  const nextHistory = {
+    ...getHabitHistory(habit),
+    [monthKey]: nextLogs,
+  };
+
+  return {
+    ...habit,
+    logs: monthKey === getMonthKey() ? nextLogs : habit.logs,
+    history: nextHistory,
+  };
+}
+
 function getVisibleReducePeriodEntries(habit, monthKey = getMonthKey()) {
   const period = habit.target.period;
   const visibleLogEntries = getVisibleMonthLogEntries(habit, monthKey);
@@ -1758,12 +1777,17 @@ function AddHabitModal({ onClose, onSave, initialHabit = null }) {
 }
 
 function HabitLogModal({ habit, onClose, onSave }) {
-  const lastRawValue = Array.isArray(habit?.logs) ? habit.logs[getTodayLogIndex(habit.logs.length)] ?? 0 : 0;
-  const lastValue = habit?.type === "build" ? getBuildValue(lastRawValue) : Number(lastRawValue) || 0;
-  const [count, setCount] = useState(lastValue);
+  const [selectedDate, setSelectedDate] = useState(getTodayDateString());
+  const selectedValue = habit ? getHabitValueForDate(habit, new Date(`${selectedDate}T00:00:00`)) : 0;
+  const [count, setCount] = useState(selectedValue);
+  useEffect(() => {
+    setCount(selectedValue);
+  }, [selectedValue]);
   if (!habit) return null;
   const isBuild = habit.type === "build";
   const quickOptions = isBuild ? Array.from({ length: Math.max(5, habit.target.frequency + 2) }, (_, index) => index) : [0, 1, 2, 3, 4];
+  const minDate = habit.startDate || getTodayDateString();
+  const maxDate = getTodayDateString();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
@@ -1776,7 +1800,11 @@ function HabitLogModal({ habit, onClose, onSave }) {
           <button onClick={onClose} className="text-zinc-500 hover:text-zinc-800"><X /></button>
         </div>
         <label className="mb-6 block">
-          <span className="text-sm font-medium text-emerald-900/70">{isBuild ? `How many completions today? Target: ${habit.target.frequency}` : "How many times today?"}</span>
+          <span className="text-sm font-medium text-emerald-900/70">Date</span>
+          <input type="date" min={minDate} max={maxDate} className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-emerald-300" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+        </label>
+        <label className="mb-6 block">
+          <span className="text-sm font-medium text-emerald-900/70">{isBuild ? `How many completions on ${formatLongDate(selectedDate)}? Target: ${habit.target.frequency}` : `How many times on ${formatLongDate(selectedDate)}?`}</span>
           <input type="number" min="0" className="mt-2 w-full rounded-2xl border border-zinc-200 px-4 py-3 text-2xl outline-none focus:ring-2 focus:ring-emerald-300" value={count} onChange={(e) => setCount(Math.max(0, Number(e.target.value)))} />
         </label>
         <div className="mb-8 grid grid-cols-5 gap-2">
@@ -1788,7 +1816,7 @@ function HabitLogModal({ habit, onClose, onSave }) {
         </div>
         <div className="flex items-center justify-end gap-3">
           <button onClick={onClose} className="rounded-full border border-zinc-300 px-5 py-3 font-medium text-zinc-700">Cancel</button>
-          <button onClick={() => onSave(habit.id, count)} className="rounded-full bg-emerald-500 px-6 py-3 font-semibold text-white hover:bg-emerald-600">Save</button>
+          <button onClick={() => onSave(habit.id, count, selectedDate)} className="rounded-full bg-emerald-500 px-6 py-3 font-semibold text-white hover:bg-emerald-600">Save</button>
         </div>
       </div>
     </div>
@@ -3199,40 +3227,18 @@ function HabitPanel({ habits, setHabits, onBack, onReset }) {
     }));
   };
 
-  const saveReduceCount = (habitId, count) => {
+  const saveReduceCount = (habitId, count, dateString = getTodayDateString()) => {
     setHabits((current) => current.map((habit) => {
       if (habit.id !== habitId || habit.type !== "reduce") return habit;
-      const nextLogs = [...habit.logs];
-      const todayIndex = getTodayLogIndex(nextLogs.length);
-      nextLogs[todayIndex] = count;
-      const monthKey = getMonthKey();
-      return {
-        ...habit,
-        logs: nextLogs,
-        history: {
-          ...getHabitHistory(habit),
-          [monthKey]: nextLogs,
-        },
-      };
+      return setHabitValueForDate(habit, dateString, count);
     }));
     setLoggingHabit(null);
   };
 
-  const saveBuildCount = (habitId, count) => {
+  const saveBuildCount = (habitId, count, dateString = getTodayDateString()) => {
     setHabits((current) => current.map((habit) => {
       if (habit.id !== habitId || habit.type !== "build") return habit;
-      const nextLogs = [...habit.logs];
-      const todayIndex = getTodayLogIndex(nextLogs.length);
-      nextLogs[todayIndex] = count;
-      const monthKey = getMonthKey();
-      return {
-        ...habit,
-        logs: nextLogs,
-        history: {
-          ...getHabitHistory(habit),
-          [monthKey]: nextLogs,
-        },
-      };
+      return setHabitValueForDate(habit, dateString, count);
     }));
     setLoggingHabit(null);
   };
