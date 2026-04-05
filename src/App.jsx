@@ -3662,7 +3662,12 @@ export default function StabilityDashboardApp() {
   const [pendingSnapshot, setPendingSnapshot] = useState(() => loadLocalDashboardState());
   const skipNextSaveRef = useRef(true);
   const saveTimeoutRef = useRef(null);
+  const snapshotRef = useRef(pendingSnapshot);
   const currentUserId = session?.user?.id ?? null;
+
+  useEffect(() => {
+    snapshotRef.current = pendingSnapshot;
+  }, [pendingSnapshot]);
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase) return undefined;
@@ -3765,23 +3770,14 @@ export default function StabilityDashboardApp() {
     const refreshCloudState = async () => {
       const { data, error } = await supabase
         .from(DASHBOARD_STATE_TABLE)
-        .select("payload")
+        .select("payload, updated_at")
         .eq("user_id", session.user.id)
         .maybeSingle();
 
       if (cancelled || error || !data?.payload) return;
 
       const nextState = normalizeDashboardState(data.payload);
-      const currentState = {
-        habits: initialData.habits,
-        tasks: initialData.tasks,
-        expenses: initialData.expenses,
-        expenseCategories: initialData.expenseCategories,
-        journalEntries: initialData.journalEntries,
-        journalFolders: initialData.journalFolders,
-        workoutPlans: initialData.workoutPlans,
-        workoutFolders: initialData.workoutFolders,
-      };
+      const currentState = snapshotRef.current;
 
       if (JSON.stringify(nextState) === JSON.stringify(currentState)) return;
 
@@ -3800,15 +3796,17 @@ export default function StabilityDashboardApp() {
       refreshCloudState();
     };
 
+    const refreshInterval = window.setInterval(refreshCloudState, 15000);
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       cancelled = true;
+      window.clearInterval(refreshInterval);
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [initialData, loading, session]);
+  }, [loading, session]);
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
