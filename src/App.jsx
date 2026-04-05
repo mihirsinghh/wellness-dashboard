@@ -449,6 +449,83 @@ function normalizeDashboardState(payload = {}) {
   };
 }
 
+function mergeArraysById(left = [], right = [], prefer = "right") {
+  const map = new Map();
+  [...left, ...right].forEach((item) => {
+    if (!item?.id) return;
+    if (!map.has(item.id)) {
+      map.set(item.id, item);
+      return;
+    }
+    const existing = map.get(item.id);
+    map.set(item.id, prefer === "right" ? { ...existing, ...item } : { ...item, ...existing });
+  });
+  return [...map.values()];
+}
+
+function mergeHabitMonthLogs(habitType, leftLogs = [], rightLogs = []) {
+  const maxLength = Math.max(leftLogs.length, rightLogs.length);
+  return Array.from({ length: maxLength }, (_, index) => {
+    const leftValue = leftLogs[index];
+    const rightValue = rightLogs[index];
+    if (leftValue === null || rightValue === null) return null;
+    if (leftValue === undefined) return rightValue;
+    if (rightValue === undefined) return leftValue;
+    if (habitType === "build") return Math.max(getBuildValue(leftValue), getBuildValue(rightValue));
+    return Math.max(Number(leftValue) || 0, Number(rightValue) || 0);
+  });
+}
+
+function mergeHabits(leftHabits = [], rightHabits = []) {
+  const mergedById = new Map();
+
+  [...leftHabits, ...rightHabits].forEach((habit) => {
+    if (!habit?.id) return;
+    const normalized = normalizeHabit(habit);
+    if (!mergedById.has(habit.id)) {
+      mergedById.set(habit.id, normalized);
+      return;
+    }
+
+    const existing = mergedById.get(habit.id);
+    const monthKeys = [...new Set([...Object.keys(getHabitHistory(existing)), ...Object.keys(getHabitHistory(normalized))])];
+    const mergedHistory = Object.fromEntries(
+      monthKeys.map((monthKey) => [
+        monthKey,
+        mergeHabitMonthLogs(
+          normalized.type ?? existing.type,
+          getHabitHistory(existing)[monthKey] ?? [],
+          getHabitHistory(normalized)[monthKey] ?? [],
+        ),
+      ]),
+    );
+
+    mergedById.set(habit.id, normalizeHabit({
+      ...existing,
+      ...normalized,
+      history: mergedHistory,
+    }));
+  });
+
+  return [...mergedById.values()];
+}
+
+function mergeDashboardStates(localState, cloudState) {
+  const normalizedLocal = normalizeDashboardState(localState);
+  const normalizedCloud = normalizeDashboardState(cloudState);
+
+  return normalizeDashboardState({
+    habits: mergeHabits(normalizedLocal.habits, normalizedCloud.habits),
+    tasks: mergeArraysById(normalizedLocal.tasks, normalizedCloud.tasks),
+    expenses: mergeArraysById(normalizedLocal.expenses, normalizedCloud.expenses),
+    expenseCategories: [...new Set([...(normalizedLocal.expenseCategories ?? []), ...(normalizedCloud.expenseCategories ?? [])])],
+    journalEntries: mergeArraysById(normalizedLocal.journalEntries, normalizedCloud.journalEntries),
+    journalFolders: mergeArraysById(normalizedLocal.journalFolders, normalizedCloud.journalFolders),
+    workoutPlans: mergeArraysById(normalizedLocal.workoutPlans, normalizedCloud.workoutPlans),
+    workoutFolders: mergeArraysById(normalizedLocal.workoutFolders, normalizedCloud.workoutFolders),
+  });
+}
+
 function loadLocalDashboardState() {
   return normalizeDashboardState({
     habits: loadStoredValue(HABITS_STORAGE_KEY, initialHabits.map(normalizeHabit), (stored) => stored.map(normalizeHabit)),
@@ -3727,9 +3804,9 @@ export default function StabilityDashboardApp() {
         return;
       }
 
-      const nextState = data?.payload ? normalizeDashboardState(data.payload) : localState;
+      const nextState = data?.payload ? mergeDashboardStates(localState, data.payload) : localState;
 
-      const needsCloudRewrite = !data?.payload || JSON.stringify(nextState) !== JSON.stringify(data.payload);
+      const needsCloudRewrite = !data?.payload || JSON.stringify(nextState) !== JSON.stringify(normalizeDashboardState(data.payload));
 
       if (needsCloudRewrite) {
         const { error: upsertError } = await supabase.from(DASHBOARD_STATE_TABLE).upsert({
@@ -3776,7 +3853,7 @@ export default function StabilityDashboardApp() {
 
       if (cancelled || error || !data?.payload) return;
 
-      const nextState = normalizeDashboardState(data.payload);
+      const nextState = mergeDashboardStates(snapshotRef.current, data.payload);
       const currentState = snapshotRef.current;
 
       if (JSON.stringify(nextState) === JSON.stringify(currentState)) return;
@@ -3810,6 +3887,40 @@ export default function StabilityDashboardApp() {
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
+
+    const channel = supabase
+      .channel(`dashboard-state-${session.user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: DASHBOARD_STATE_TABLE,
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        (payload) => {
+          const nextPayload = payload.new?.payload;
+          if (!nextPayload) return;
+
+          const nextState = mergeDashboardStates(snapshotRef.current, nextPayload);
+          if (JSON.stringify(nextState) === JSON.stringify(snapshotRef.current)) return;
+
+          skipNextSaveRef.current = true;
+          setInitialData(nextState);
+          setPendingSnapshot(nextState);
+          setShellKey((current) => current + 1);
+          setSyncStatus("Live changes received from cloud.");
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loading, session]);
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
     if (!pendingSnapshot) return undefined;
 
     if (skipNextSaveRef.current) {
@@ -3821,9 +3932,17 @@ export default function StabilityDashboardApp() {
     setSyncStatus("Saving changes...");
 
     saveTimeoutRef.current = setTimeout(async () => {
+      const { data: cloudRow } = await supabase
+        .from(DASHBOARD_STATE_TABLE)
+        .select("payload")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+
+      const mergedSnapshot = cloudRow?.payload ? mergeDashboardStates(pendingSnapshot, cloudRow.payload) : pendingSnapshot;
+
       const { error } = await supabase.from(DASHBOARD_STATE_TABLE).upsert({
         user_id: session.user.id,
-        payload: pendingSnapshot,
+        payload: mergedSnapshot,
         updated_at: new Date().toISOString(),
       });
 
@@ -3832,6 +3951,9 @@ export default function StabilityDashboardApp() {
         return;
       }
 
+      skipNextSaveRef.current = true;
+      setInitialData(mergedSnapshot);
+      setPendingSnapshot(mergedSnapshot);
       setSyncStatus("All changes synced.");
     }, SAVE_DEBOUNCE_MS);
 
