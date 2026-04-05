@@ -3759,6 +3759,59 @@ export default function StabilityDashboardApp() {
 
   useEffect(() => {
     if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
+
+    let cancelled = false;
+
+    const refreshCloudState = async () => {
+      const { data, error } = await supabase
+        .from(DASHBOARD_STATE_TABLE)
+        .select("payload")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
+
+      if (cancelled || error || !data?.payload) return;
+
+      const nextState = normalizeDashboardState(data.payload);
+      const currentState = {
+        habits: initialData.habits,
+        tasks: initialData.tasks,
+        expenses: initialData.expenses,
+        expenseCategories: initialData.expenseCategories,
+        journalEntries: initialData.journalEntries,
+        journalFolders: initialData.journalFolders,
+        workoutPlans: initialData.workoutPlans,
+        workoutFolders: initialData.workoutFolders,
+      };
+
+      if (JSON.stringify(nextState) === JSON.stringify(currentState)) return;
+
+      skipNextSaveRef.current = true;
+      setInitialData(nextState);
+      setPendingSnapshot(nextState);
+      setShellKey((current) => current + 1);
+      setSyncStatus("Pulled latest changes from cloud.");
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshCloudState();
+    };
+
+    const handleWindowFocus = () => {
+      refreshCloudState();
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [initialData, loading, session]);
+
+  useEffect(() => {
+    if (!hasSupabaseConfig || !supabase || !session?.user || loading) return undefined;
     if (!pendingSnapshot) return undefined;
 
     if (skipNextSaveRef.current) {
